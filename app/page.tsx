@@ -57,7 +57,7 @@ export default function Home() {
               <span>Vault Protocol v2.4 Active</span>
             </div>
             
-            <h1 className="text-4xl md:text-7xl font-bold tracking-tighter mb-6 md:mb-8 text-foreground uppercase leading-tight md:leading-none">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tighter mb-6 md:mb-8 text-foreground uppercase leading-tight">
               The Holy Grail<span className="text-primary opacity-30">_</span>
             </h1>
             

@@ -57,7 +57,7 @@ export default async function ContentPage({ params }: { params: Promise<{ slug: 
                 <span>Source File: {doc.frontmatter.extension}</span>
               </div>
             )}
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tighter text-foreground mb-6 uppercase">
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tighter text-foreground mb-6 uppercase leading-tight">
               {doc.frontmatter.title}
             </h1>
             
