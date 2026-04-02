@@ -8,20 +8,40 @@ export const CustomComponents = {
   Note,
   Quiz,
   // Map standard Markdown code blocks to our custom CodeBlock
-  pre: ({ children }: any) => {
-    const codeElement = React.Children.toArray(children).find(
-      (child: any) => (child as any).type === 'code'
-    ) as any;
+pre: ({ children }: any) => {
+  const codeElement = React.Children.toArray(children).find(
+    (child: any) => child?.type === 'code'
+  ) as any;
 
-    if (codeElement) {
-      const { children: code, className } = codeElement.props;
-      const fullLang = className?.replace('language-', '') || 'text';
-      const [lang, filename] = fullLang.split(':');
-      return <CodeBlock code={code.trim()} lang={lang} filename={filename} />;
+  if (codeElement?.props) {
+    const { children: rawCode, className } = codeElement.props;
+
+    // ✅ SAFE extraction
+    let code = '';
+
+    if (typeof rawCode === 'string') {
+      code = rawCode;
+    } else if (Array.isArray(rawCode)) {
+      code = rawCode.join('');
+    } else if (rawCode) {
+      code = String(rawCode);
     }
 
-    return <pre>{children}</pre>;
+    const fullLang = className?.replace('language-', '') || 'text';
+    const [lang, filename] = fullLang.split(':');
+
+    return (
+      <CodeBlock
+        code={code.trim()}
+        lang={lang}
+        filename={filename}
+      />
+    );
   }
+
+  // fallback (important)
+  return <pre>{children}</pre>;
+}
 };
 
 export default CustomComponents;
