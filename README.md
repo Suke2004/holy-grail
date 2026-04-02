@@ -1,36 +1,97 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Holy Grail Files 🛡️
 
-## Getting Started
+**The Master Vault for Software Engineering Excellence.**
 
-First, run the development server:
+Holy Grail Files is a high-performance, professional knowledge base and documentation platform built with **Next.js 16 (Turbopack)**. It transforms local Markdown and raw source code files into a beautiful, interactive "Vault" with a sophisticated "Black & White" monochromatic aesthetic.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🌓 Core Philosophy: The Monochromatic Vault
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The platform is designed with a **Deep Monochromatic Aesthetic**—shifting away from traditional "Blue Accents" to a premium, high-contrast **Black & White** system. It features a seamless theme toggle that respects the technical, minimalist nature of deep software research.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### ✨ Key Features
 
-## Learn More
+1.  **🚀 Universal Content Pipeline**:
+    *   **Recursive Crawler**: Automatically indexes both Markdown (`.md`, `.mdx`) and Raw Source Code (`.c`, `.cpp`, `.py`, `.js`, etc.).
+    *   **Automatic Wrapping**: Raw source files are instantly wrapped in high-fidelity code blocks with correct syntax detection.
+    *   **MDX Escaping**: Robust character escaping ensures that raw source code won't break the build during MDX/Acorn parsing.
 
-To learn more about Next.js, take a look at the following resources:
+2.  **🖥️ VS Code Style Code Blocks**:
+    *   **Shiki-Powered**: Uses the same engine as VS Code for pixel-perfect syntax highlighting.
+    *   **Editor UI**: Features tab-like headers with filenames, language icons, and sticky navigation.
+    *   **Line Numbers & Gutter**: Industry-standard code gutters for easy reference.
+    *   **Overflow Stability**: Strict layout control for long lines on both desktop and mobile.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+3.  **📱 Fully Responsive Mobile Navigation**:
+    *   **Sticky Mobile Header**: A sleek header with a hamburger menu for quick access on small screens.
+    *   **Animated Drawer**: A high-performance slide-out sidebar using `framer-motion` for tablet and phone navigation.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+4.  **📑 MDX Enhanced Content**:
+    *   Supports custom components like `Notes`, `Quizzes`, and `CodeBlocks` for a rich learning experience.
+    *   Monochromatic breadcrumbs for effortless navigation through deep directory trees.
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🛠️ Technology Stack
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+*   **Framework**: [Next.js 16 (Turbopack)](https://nextjs.org/)
+*   **Styling**: [Tailwind CSS 4](https://tailwindcss.com/)
+*   **Animations**: [Framer Motion](https://www.framer.com/motion/)
+*   **Highlighting**: [Shiki](https://shiki.matsu.io/)
+*   **Content**: [MDX Remote](https://github.com/hashicorp/next-mdx-remote)
+*   **Icons**: [Lucide React](https://lucide.dev/)
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+*   [Node.js](https://nodejs.org/) (v18+)
+*   [pnpm](https://pnpm.io/) (recommended) or npm/yarn
+
+### Installation
+
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/your-repo/holy-grail-files.git
+    cd holy-grail-files
+    ```
+
+2.  **Install dependencies**:
+    ```bash
+    pnpm install
+    ```
+
+3.  **Start the development server**:
+    ```bash
+    pnpm dev
+    ```
+
+4.  **Build for production**:
+    ```bash
+    pnpm build
+    ```
+
+---
+
+## 📁 Directory Structure
+
+*   `app/`: Next.js 16 App Router pages and global layouts.
+*   `components/`: Reusable UI components (Sidebar, MobileNav, MDX components).
+*   `content/`: The source of truth. Add your `.mdx` or raw code files here to see them in the vault.
+*   `lib/`: Core logic for the content crawler, sidebar generation, and syntax highlighting.
+*   `public/`: Static assets and fonts.
+
+---
+
+> [!NOTE]  
+> This platform is currently in **v2.4 Vault Protocol** active development.
+
+> [!IMPORTANT]  
+> All source code files are escaped in the pipeline to prevent MDX parsing errors. If you see broken characters in the code blocks, ensure your file encoding is UTF-8.
+
+---
+
+Built with ❤️ for Software Engineers.
+© 2026 Holy Grail Files.
