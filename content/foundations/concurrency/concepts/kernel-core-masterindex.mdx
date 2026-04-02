@@ -1,0 +1,162 @@
+---
+title: "Kernel core MasterIndex"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+#  Master Index: The `core.c` Journey
+### *Architecting Time and Silicon*
+
+> "To understand the scheduler is to understand the greatest magic trick in computer science: the illusion of infinite resources running on finite silicon."
+
+This index is the curriculum guide for the Linux Scheduler Decoder. It weaves four deep-dive segments into a single logical progression — transforming 10,000 lines of intimidating kernel C into a coherent mental model of how an operating system manufactures the illusion of concurrency. The rule is the same as the `malloc.c` series: do not advance to the next stage until you can reproduce the mechanical steps of the current one from memory, without referring back.
+
+---
+
+##  The Four Stages at a Glance
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 1 — Infrastructure Layer                                  │
+│  The waiting room. Per-CPU runqueues and scheduler classes.      │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 2 — Execution Layer                                       │
+│  The illusion. Swapping memory maps, registers, and realities.  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 3 — Algorithm Layer                                       │
+│  The mathematics. vruntime, red-black trees, and CFS fairness.  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 4 — Topology Layer                                        │
+│  The geography. NUMA awareness, work stealing, cache locality.  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+##  Stage 1 — The Runqueue
+
+**File:** `linux_sched_core_DECODER_segment_1.md`
+**Layer:** Infrastructure — the waiting room before the CPU.
+
+Before any scheduling decision can be made, the kernel needs a place to keep the tasks that are ready to run but not yet running. That place is `struct rq` — one per CPU core, isolated by design.
+
+**Core concepts covered:**
+
+- **`struct rq`** — the per-CPU runqueue: why each core maintains its own private state rather than sharing a global queue, and what the contention cost of a global queue would be at modern core counts.
+- **`nr_running`** — the pressure gauge: the single integer that tells the load balancer at a glance how overloaded a core is, without traversing the queue itself.
+- **Scheduler classes** — the priority hierarchy: `SCHED_DEADLINE` → `SCHED_FIFO`/`SCHED_RR` (real-time) → `SCHED_NORMAL` (CFS) → `SCHED_IDLE`. Each class is a pluggable module with its own `pick_next_task` implementation. The kernel tries each class in priority order on every scheduling decision.
+- **The `clock_task` field** — per-runqueue timekeeping: why the scheduler maintains its own time source rather than relying on a global clock, and how this enables the virtual runtime accounting in Stage 3.
+
+**The goal:** Stop thinking of the computer as a single machine. See it as a collection of independent desks, each with its own private queue of waiting workers, governed by a strict class hierarchy that guarantees a real-time audio thread will always preempt a background indexer.
+
+---
+
+##  Stage 2 — The Context Switch
+
+**File:** `linux_sched_core_DECODER_segment_2.md`
+**Layer:** Execution — the exact, computationally expensive moment the baton passes.
+
+The runqueue tells the scheduler *who* runs next. The context switch is *how* one program is frozen in time and another is violently brought back to life — without either one knowing.
+
+**Core concepts covered:**
+
+- **`context_switch()`** — the four-phase protocol: `prepare_task_switch()` → `switch_mm_irqs_off()` → `switch_to()` → `finish_task_switch()`. Each phase has a distinct hardware responsibility.
+- **`switch_mm_irqs_off()`** — swapping the memory map: replacing the outgoing task's `mm_struct`, redirecting the MMU to new page tables, and flushing the TLB. The single most expensive operation in the switch — every cached virtual-to-physical translation is discarded.
+- **`switch_to()`** — swapping the registers: the C-to-assembly boundary where the outgoing task's stack pointer and instruction pointer are saved and the incoming task's are loaded. The moment the hardware changes identity.
+- **Meltdown/Spectre and KPTI** — how a hardware side-channel vulnerability in speculative execution forced `switch_mm_irqs_off()` to become significantly heavier, imposing a measurable performance regression on every Linux system worldwide.
+
+**The goal:** Understand the exact computational cost of the illusion — and why every clock cycle spent in `context_switch()` is a cycle taxed from every program on the machine.
+
+---
+
+##  Stage 3 — The Completely Fair Scheduler
+
+**File:** `linux_sched_core_DECODER_segment_3.md`
+**Layer:** Algorithm — the mathematical engine that decides who runs next, and for how long.
+
+The runqueue stores the candidates. The context switch performs the handoff. Between them, CFS decides who wins — using a virtual clock that deliberately runs at different speeds for different tasks to enforce proportional fairness.
+
+**Core concepts covered:**
+
+- **`vruntime`** — virtual runtime: time that accumulates faster for low-priority tasks and slower for high-priority ones, so that the task with the lowest `vruntime` is always the one that has received the least proportional CPU time. Priority is implemented as a time dilation, not a queue position.
+- **The red-black tree** — O(log n) scheduling: CFS stores all runnable tasks in a red-black tree ordered by `vruntime`. The leftmost node is always the next task to run. Insertion and removal are O(log n); selection is O(1).
+- **`pick_next_entity()`** — the selection function: one tree lookup, one `vruntime` comparison, one task returned. The entire scheduling decision for a normal process in a single function call.
+- **EEVDF (Earliest Eligible Virtual Deadline First)** — the successor to CFS: a deadline-based variant that addresses latency fairness problems CFS could not solve, merged into the Linux kernel in 2023. Understanding `vruntime` is the prerequisite for understanding why EEVDF was needed.
+
+**The goal:** Grasp the mathematical guarantee the kernel makes on every system: that over any sufficiently long window, every task receives CPU time proportional to its weight — and that the red-black tree is the data structure that makes this guarantee O(1) to enforce at the moment of scheduling.
+
+---
+
+##  Stage 4 — Load Balancing
+
+**File:** `linux_sched_core_DECODER_segment_4.md`
+**Layer:** Topology — distributing work across cores, sockets, and NUMA domains.
+
+A perfect per-CPU scheduler that never redistributes work is useless on a 64-core machine. Stage 4 is where the scheduler becomes topology-aware — where it learns that not all CPUs are equidistant, and that moving a task is sometimes more expensive than leaving it idle.
+
+**Core concepts covered:**
+
+- **`struct sched_domain`** — the hardware topology map: built at boot from ACPI tables, encoding the cache-sharing relationships between hyperthreads, cores, and sockets. Balancing always starts at the innermost domain and escalates outward — check nearest neighbours before crossing a NUMA boundary.
+- **`load_balance()`** — the work-steal algorithm: `find_busiest_group()` → `find_busiest_queue()` → `detach_tasks()` → `attach_tasks()`. An idle CPU reaches into a busy runqueue, extracts a calibrated batch of tasks, and recalibrates their `vruntime` to match the new runqueue's timeline.
+- **Cache locality vs. utilisation** — the central trade-off: migrating a task destroys its warm L1/L2 cache, forcing a cold-miss penalty on every memory access until the cache rebuilds. The scheduler explicitly refuses migrations where the cache cost exceeds the throughput gain from utilising an idle core.
+- **Energy Aware Scheduling (EAS)** — the power dimension: on ARM big.LITTLE processors, `load_balance()` incorporates an energy model and will leave a performance core idle rather than migrate a light task onto it, because the power cost of waking the core exceeds the throughput benefit.
+
+**The goal:** Master the logic that allows Linux to scale from a Raspberry Pi to a 128-core NUMA server — and understand why "always use idle cores" is not a policy but a starting point that the real scheduler corrects for topology, temperature, and energy consumption.
+
+---
+
+##  The "Final Boss" Challenge
+
+Complete all four segments first. Then perform this experiment on any Linux machine — including WSL on Windows.
+
+**The Controlled Chaos Test**
+
+```bash
+# Terminal A — generate sustained CPU load
+while true; do :; done &
+CHAOS_PID=$!
+echo "Chaos PID: $CHAOS_PID"
+```
+
+```bash
+# Terminal B — observe with htop
+htop
+```
+
+Now intervene at each scheduler layer in sequence:
+
+| Command | Segment Exercised | What You Are Watching |
+|---|---|---|
+| `renice +10 $CHAOS_PID` | **Stage 3 — CFS** | The task's `vruntime` accumulates faster. Its position in the red-black tree shifts rightward. It receives less CPU proportionally. |
+| `taskset -cp 0 $CHAOS_PID` | **Stage 4 — Load Balancing** | CPU affinity is pinned. `find_busiest_queue()` excludes this task from migration candidates. Every other core becomes idle while CPU 0 saturates. |
+| `kill -STOP $CHAOS_PID` | **Stage 2 — Context Switch** | The task is removed from the runqueue entirely. A context switch fires immediately. `switch_to()` saves its register state. It will not run again until `kill -CONT`. |
+| `kill -CONT $CHAOS_PID` | **Stage 1 — Runqueue** | The task is reinserted into the runqueue at its CPU affinity-pinned core. Its `vruntime` is not reset — it picks up exactly where CFS left it. |
+
+A single process, four commands, four layers of the scheduler made observable without recompiling a single kernel module.
+
+---
+
+##  Essential Reading — In Order
+
+| Resource | Read When |
+|---|---|
+| [Linux Kernel Documentation on CFS](https://www.kernel.org/doc/html/latest/scheduler/sched-design-CFS.html) | Before Stage 3. The kernel developers' own description of the CFS design goals and `vruntime` accounting. Short, precise, authoritative. |
+| [`kernel/sched/core.c`](https://github.com/torvalds/linux/blob/master/kernel/sched/core.c) | Alongside Stages 1 and 2. The entry points, the runqueue structure, and `context_switch()` all live here. |
+| [`kernel/sched/fair.c`](https://github.com/torvalds/linux/blob/master/kernel/sched/fair.c) | Alongside Stages 3 and 4. CFS, `vruntime`, the red-black tree, `load_balance()`, and EEVDF all live here. |
+| [LWN: EEVDF Replacing CFS — 2023](https://lwn.net/Articles/925371/) | After Stage 3. Understand why `vruntime`-based CFS has latency fairness limits, and how EEVDF addresses them. The present and near future of Linux scheduling. |
+| [*Linux Kernel Development* — Robert Love](https://www.oreilly.com/library/view/linux-kernel-development/9780768696974/) | Concurrent with all four stages. Chapter 4 (Process Scheduling) is the clearest prose explanation of the scheduler's history from O(1) through CFS. |
+
+
+---
+
+*Filed under: `01_Foundations / Concurrency` · Master Index · Four segments complete*

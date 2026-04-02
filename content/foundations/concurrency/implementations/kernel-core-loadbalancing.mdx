@@ -1,0 +1,152 @@
+---
+title: "Kernel core LoadBalancing decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+#  The Decoder: `core.c` — Segment 4 of 4
+## *Load Balancing — The Art of Stealing Work*
+
+> **Domain:** Operating System Kernels / Multi-Core Scheduling / NUMA Architecture
+> **Source:** [`kernel/sched/core.c`](https://github.com/torvalds/linux/blob/master/kernel/sched/core.c) · [`kernel/sched/fair.c`](https://github.com/torvalds/linux/blob/master/kernel/sched/fair.c)
+> **Segment Focus:** `sched_domain`, `load_balance()`, and the fundamental tension between idle silicon and cache locality.
+
+> *"An idle CPU is wasted silicon. But moving a task to a new CPU destroys the high-speed memory cache it spent milliseconds building. Load balancing is the mathematics of deciding which pain is worse — waiting or moving."*
+
+---
+
+##  The "Deep Root" Context
+
+*Why is multi-core scheduling harder than single-core scheduling?*
+
+We know how to swap workers at a single desk (Segment 2), manage the waiting line (Segment 1), and decide who sits next (Segment 3). But a modern server has 64 cores. If 63 of those cores are idle while one has a queue of 100 tasks, the system is failing — not because it lacks capacity, but because the scheduler hasn't distributed the work.
+
+The naive fix — always move tasks to idle cores immediately — destroys performance. Modern processors have a deep, hierarchical memory system, and where a task runs determines which caches it can reach:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CPU Socket A                    │  CPU Socket B                │
+│                                  │                              │
+│  ┌─────────┐   ┌─────────┐       │  ┌─────────┐   ┌─────────┐  │
+│  │ Core 0  │   │ Core 1  │       │  │ Core 2  │   │ Core 3  │  │
+│  │  L1/L2  │   │  L1/L2  │       │  │  L1/L2  │   │  L1/L2  │  │
+│  └────┬────┘   └────┬────┘       │  └────┬────┘   └────┬────┘  │
+│       └──────┬───────┘           │       └──────┬───────┘       │
+│           Shared L3              │           Shared L3          │
+│           Cache                  │           Cache              │
+└──────────────┬───────────────────┴──────────────┬──────────────┘
+               └────────────┬──────────────────────┘
+                        System RAM
+                     (NUMA: each socket
+                      has its own bank)
+```
+
+Migrating a task between two hyperthreads costs almost nothing — they share L1 cache. Migrating between two cores on the same chip loses the L1 but retains the L3. Migrating between two sockets loses everything: the task must re-fetch its entire working set across the motherboard interconnect, a cost that can be 10× the intra-socket latency.
+
+> **The Core Truth:** Load balancing is not just scheduling — it is topology-aware geography. The scheduler maintains a hardware map of your CPU and uses it to calculate, for every potential migration, whether the performance gain from utilising an idle core outweighs the performance loss of abandoning a warm cache.
+
+---
+
+##  The "Literate" Map: The Anatomy of a Work Steal
+
+The triggering logic lives in `core.c`, but the mathematics of balancing — finding the busiest group, calculating load weights, deciding what to migrate — lives in `fair.c`. Follow the call chain across both files.
+
+| Function / Struct | The Secret Logic |
+| :--- | :--- |
+| `struct sched_domain` | **The Topology Map.** Built during kernel boot by interrogating the hardware's ACPI tables. Represents the hierarchy: SMT (hyperthreads) → MC (cores on one chip) → NUMA (sockets). Balancing always starts at the innermost domain and escalates outward — check your nearest neighbours before crossing a socket boundary. |
+| `load_balance()` | **The Detective.** Triggered when a CPU goes idle or when a periodic tick fires on an overloaded CPU. Walks the `sched_domain` hierarchy looking for imbalance. Decides whether the imbalance is severe enough to justify a migration at this topology level. |
+| `find_busiest_group()` | **Identifying the Victim.** Scans the CPU groups within the current `sched_domain` and returns the one carrying the highest weighted load. Load weight accounts for task priority — a high-priority task contributes more load than a low-priority one of equal CPU consumption. |
+| `find_busiest_queue()` | **Narrowing the Target.** Within the busiest group, finds the specific runqueue with the most migratable load — tasks that are not pinned by CPU affinity and whose cache footprint makes them reasonable to move. |
+| `detach_tasks()` | **The Work Steal.** The idle CPU reaches into the busy runqueue and detaches a batch of tasks. The batch size is calculated to bring both queues toward balance without overshooting — you don't want to create a new imbalance in the other direction. |
+| `attach_tasks()` | **Resettlement.** The stolen tasks are inserted into the idle CPU's runqueue. Their `vruntime` (the CFS virtual clock from Segment 3) is recalibrated to match their new runqueue's timeline — without this adjustment, a task stolen from a busy queue would appear to have enormous accumulated runtime and would be unfairly deprioritised on its new CPU. |
+
+---
+
+##  Mental Model: The Supermarket Checkout
+
+Eight cash registers. A thousand customers. One shift manager watching the lines.
+
+You are in Line 1, which has ten people ahead of you. You have already placed all your groceries on the conveyor belt. Line 2 just opened — it has zero customers.
+
+The shift manager has a decision to make:
+
+```
+Option A — Leave you in Line 1:
+  Cost: wait for 10 customers × average service time
+  Benefit: your groceries stay on the belt, ready to process
+
+Option B — Move you to Line 2:
+  Cost: you collect your groceries, walk to Line 2, unload again
+  Benefit: you are next in line, zero wait
+
+Break-even point: if the walk + reload cost exceeds the wait cost, stay.
+```
+
+This is exactly the calculation `load_balance()` performs. The "groceries on the belt" are your task's working set in the L1/L2 cache — warm, fast, immediately accessible. The "walk to Line 2" is the migration: the cache is flushed, and every memory access for the next several milliseconds pays a cold-miss penalty while the new cache warms up.
+
+Linux will deliberately leave a CPU slightly underloaded if the cache locality penalty of a migration exceeds the throughput gain of the move. Idle silicon is a cost. Cache destruction is also a cost. The scheduler chooses the lesser.
+
+---
+
+##  The Modern Mirror
+
+**NUMA-Aware Allocation**
+
+Load balancing does not operate in isolation. The Linux memory allocator (`mm/`) is NUMA-aware: when a task allocates memory, the kernel tries to allocate from the RAM bank physically closest to the CPU the task is currently running on. If the scheduler later migrates that task to the other socket, its memory remains on the original socket — every access now crosses the interconnect.
+
+This is why NUMA-aware applications call `mbind()` or `set_mempolicy()` to pin their allocations, and why database engines like PostgreSQL and in-memory data stores like Redis expose NUMA configuration options. The scheduler's migration decision and the allocator's placement decision must agree, or performance degrades silently.
+
+**Energy Aware Scheduling (EAS)**
+
+Load balancing once optimised exclusively for throughput. Modern Linux also optimises for power consumption — critical on battery-powered devices.
+
+ARM's big.LITTLE architecture places efficiency cores (low clock speed, minimal power) alongside performance cores (high clock speed, high power) on the same chip. Linux's Energy Aware Scheduling extends `load_balance()` with an energy model: a mathematical function mapping task load to power consumption per core type. The scheduler queries this model before every migration decision.
+
+The consequence: a task that fits within the efficiency cores' capacity will not be migrated to a performance core, even if the performance core is completely idle. The energy cost of waking a performance core from a low-power state exceeds the throughput benefit for light workloads. The scheduler explicitly refuses to balance in order to preserve battery life.
+
+EAS is `load_balance()` with a second optimisation objective — and the first time in kernel history that "do less work, on purpose, to conserve energy" became a formal scheduling policy rather than an accident.
+
+---
+
+##  The "Build & Break" Challenges
+
+**1. Watch the Balancer Work**
+
+Run a CPU-saturating loop and observe the load balancer migrate it across cores:
+
+```bash
+# Terminal 1 — start the load
+while true; do echo > /dev/null; done &
+
+# Terminal 2 — watch per-core utilisation
+htop
+```
+
+Watch the highlighted process in `htop`. Over 30–60 seconds, observe which CPU column it occupies. You will see it migrate — the load balancer periodically moves it to prevent thermal accumulation and to rebalance as other tasks start and stop. Each migration is one execution of `detach_tasks()` + `attach_tasks()`.
+
+**2. Override the Scheduler with CPU Affinity**
+
+Kill the previous loop. Now pin it to a single core:
+
+```bash
+taskset -c 0 bash -c 'while true; do echo > /dev/null; done' &
+htop
+```
+
+CPU 0 will saturate at 100%. Every other core remains idle. The load balancer cannot touch it — `taskset` sets the task's CPU affinity mask, and `find_busiest_queue()` excludes affinity-pinned tasks from migration candidates. You have made a core invisible to the balancer. This is the mechanism database engines use to dedicate a core to a critical thread, and the same mechanism that causes performance disasters when misconfigured.
+
+Kill the pinned process with `kill %1` or `fg` + Ctrl-C when done.
+
+**3. The `/proc/schedstat` Readout**
+
+```bash
+cat /proc/schedstat
+```
+
+Each `cpuN` line reports (among other fields): nanoseconds the CPU spent running tasks, nanoseconds tasks spent waiting on this CPU's runqueue, and the total number of timeslices executed. Run this before and after the affinity experiment above. The difference in the waiting-time field between CPU 0 (saturated) and any other CPU (idle) quantifies, in nanoseconds, the cost of the imbalance you created. The scheduler measured it. You are reading its measurement.
+
+
+---
+
+*Filed under: `01_Foundations / Concurrency` · Part 4 of 4 · Lineage: Linux CFS → cgroups v2 → Kubernetes scheduler → Energy Aware Scheduling (EAS)*

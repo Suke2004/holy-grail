@@ -1,0 +1,144 @@
+---
+title: "Kernel core ContexSwitch decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# The Decoder: `core.c` — Segment 2 of 4
+## *The Context Switch — The Illusion of Concurrency*
+
+> **Domain:** Operating System Kernels / Process Scheduling / Hardware-Software Interface
+> **Source:** [`kernel/sched/core.c`](https://github.com/torvalds/linux/blob/master/kernel/sched/core.c)
+> **Segment Focus:** The `context_switch()` function — the four-step protocol that swaps one program's entire universe for another's, millions of times per second, without either program noticing.
+
+> *"A CPU core can only do one thing at a time. Concurrency is a magic trick performed by swapping the entire reality of a program fast enough that it never suspects it was ever away."*
+
+---
+
+## The "Deep Root" Context
+
+*What is the context switch, and why is every cycle of it sacred?*
+
+When you stream music while compiling code, both programs believe they own the CPU entirely. They are wrong — but they will never know it. The Linux scheduler maintains this illusion through the context switch: the complete, reversible replacement of one program's execution state with another's.
+
+The context switch is pure overhead. For its entire duration, zero user-space work is being done. The kernel is not serving your application — it is paying the cost of switching to the next one. Every clock cycle spent here is a cycle taxed from every program on the machine.
+
+This is why `context_switch()` is among the most carefully optimised code in the Linux kernel. It cannot be made faster by throwing hardware at it. It can only be made faster by eliminating work — and every line that remains has survived years of scrutiny justifying its existence.
+
+> **The Core Truth:** A CPU core can only execute one instruction stream at a time. Parallelism on a single core is an illusion sustained by performing this swap fast enough that neither program perceives the interruption. The quality of that illusion — its speed, its fidelity, its security — is determined entirely by the code in this segment.
+
+---
+
+## The "Literate" Map: Inside `context_switch()`
+
+In the source, locate `context_switch(struct rq *rq, struct task_struct *prev, struct task_struct *next, ...)`. This function is the exact moment the baton passes. It executes in four phases, each with a distinct responsibility:
+
+| Step | Function | The Secret Logic |
+| :--- | :--- | :--- |
+| **1 — Pre-flight** | `prepare_task_switch()` | Notifies all kernel subsystems that a task swap is imminent. Handles RCU (Read-Copy-Update) grace periods, architecture-specific preparations, and any subsystem that must observe the boundary between the outgoing and incoming task. The announcement before the act. |
+| **2 — Swap the mind** | `switch_mm_irqs_off()` | Replaces the outgoing task's `mm_struct` — its entire view of virtual memory — with the incoming task's. This directs the CPU's Memory Management Unit to a new set of page tables. **The TLB (Translation Lookaside Buffer) is flushed here.** This is the single most expensive operation in the switch: every cached virtual-to-physical address translation is discarded and must be rebuilt from scratch as the new task runs. |
+| **3 — Swap the body** | `switch_to(prev, next)` | A macro that bridges C into raw assembly. Saves the outgoing task's CPU registers — stack pointer, instruction pointer, general-purpose registers — into its `task_struct`. Loads the incoming task's registers from its `task_struct`. When this macro completes, the CPU is executing the incoming task's instruction stream. The caller changed; the hardware moved. |
+| **4 — Clean up** | `finish_task_switch()` | Runs in the context of the *new* task — the first code the incoming task executes. Releases the runqueue lock that the outgoing task was holding. If the outgoing task has exited, frees its kernel stack and `task_struct`. The previous task's last resource obligations are discharged by its successor. |
+
+---
+
+## Mental Model: The Desk Swap
+
+One physical desk. One filing cabinet. Thousands of workers. Only ever one person seated.
+
+```
+State: Alice is working
+┌────────────────────────────────────────────────┐
+│  Desk (CPU registers)                          │
+│  ● Papers spread out        ← register state   │
+│  ● Book open to page 5      ← instruction ptr  │
+│  ● Filing index on desk     ← page tables/MMU  │
+└────────────────────────────────────────────────┘
+```
+
+The scheduler says: Alice's time slice is done.
+
+```
+prepare_task_switch()  → "Swap incoming. All subsystems: note the boundary."
+
+switch_mm_irqs_off()   → Alice's filing index goes into her folder.
+                         Bob's filing index is placed on the desk.
+                         The TLB is wiped — old address translations discarded.
+
+switch_to()            → Alice writes "page 5" on her bookmark.
+                         She sweeps her papers into her folder.
+                         Bob's folder opens. His papers are laid out exactly as he left them.
+                         His bookmark says "page 42."
+
+finish_task_switch()   → The runqueue lock is released.
+                         Bob begins reading from page 42.
+                         Alice does not exist until the scheduler chooses her again.
+```
+
+Bob never knew Alice was at the desk. Alice will never know Bob was there. The illusion is complete.
+
+---
+
+## The Modern Mirror: Meltdown, Spectre, and the Cost of Trust
+
+Segment 2 is where hardware and software collide — and where a single hardware design decision reshaped the performance of every Linux system in the world.
+
+**The Exploit**
+
+In 2018, researchers demonstrated that the CPU's speculative execution engine leaves traces of one task's memory in micro-architectural buffers (branch predictor state, store buffers, fill buffers) that persist across context switches. A malicious process could craft memory access patterns that cause the CPU to speculatively read kernel memory or another process's memory into these buffers — and then extract it through a timing side-channel. This is Spectre/Meltdown: a vulnerability not in software, but in the CPU's performance-optimisation hardware.
+
+**The Fix: KPTI**
+
+The Linux kernel's response was **Kernel Page-Table Isolation**. Previously, the kernel's page tables remained partially mapped during user-space execution to reduce the cost of syscall entry. After KPTI, the kernel unmaps itself from user-space address space entirely — and `switch_mm_irqs_off()` became responsible for enforcing a far more aggressive separation between task address spaces.
+
+The result: `context_switch()` became measurably slower on every affected CPU, across every Linux installation in the world. Performance regressions of 5–30% were reported on I/O-bound workloads. A single hardware flaw in the TLB's trust model forced a permanent tax on one of the most optimised code paths in the kernel.
+
+This is the most instructive example in the entire codebase of how hardware assumptions silently embedded in kernel code can become catastrophic liabilities when those assumptions are violated.
+
+---
+
+## The "Build & Break" Challenges
+
+No kernel recompilation required. Both challenges run on any Linux system.
+
+**1. The Live Observer**
+
+Open a terminal and run:
+
+```bash
+vmstat 1
+```
+
+Watch the `cs` (context switches per second) column. On an idle desktop you will see hundreds per second; on a loaded server, tens of thousands. Every number in that column is a complete execution of `context_switch()`. The column is a real-time heartbeat of the scheduler's workload — and the cost of the illusion, measured in switches per second.
+
+**2. The Yield Explosion**
+
+Compile and run the following two programs, checking `vmstat 1` between each:
+
+```c
+/* Program A — tight loop, yields nothing */
+#include <unistd.h>
+int main(void) {
+    while (1) {}   /* monopolises the CPU until forcibly preempted */
+    return 0;
+}
+```
+
+```c
+/* Program B — explicit yield on every iteration */
+#include <sched.h>
+int main(void) {
+    while (1) { sched_yield(); }  /* voluntarily requeues itself constantly */
+    return 0;
+}
+```
+
+Program A will cause the `cs` column to drop — the process is hogging the CPU, and the scheduler only evicts it when its time slice expires. Program B will cause the `cs` column to explode — `sched_yield()` calls directly into `context_switch()` on every iteration, potentially hundreds of thousands of times per second.
+
+The difference between those two numbers is the cost of voluntary cooperation with the scheduler, made visible in a terminal.
+
+
+---
+
+*Filed under: `01_Foundations / Concurrency` · Part 2 of 4 · Lineage: Linux CFS → cgroups → container schedulers (Kubernetes) → real-time variants (PREEMPT\_RT)*

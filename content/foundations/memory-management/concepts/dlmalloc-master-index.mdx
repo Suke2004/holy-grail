@@ -1,0 +1,155 @@
+---
+title: "dlmalloc master index"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🗺️ Master Index: The `dlmalloc` Journey
+### *Navigating 5,000 Lines of Memory Mastery*
+
+> "To manage memory is to manage the boundary between the abstract logic of software and the physical constraints of silicon."
+
+This index is the table of contents for the most complex entry in the Holy Grail repository. It binds four deep-dive segments into a single, cohesive curriculum. The rule is simple: do not advance to the next stage until you can sketch the data structures from the current one on paper, from memory, without referring back to the file.
+
+---
+
+## 🗂️ The Four Stages at a Glance
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 1 — Physical Layer                                        │
+│  The shape of a single chunk. The atom of the heap.             │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 2 — Organisation Layer                                    │
+│  How free chunks are sorted into bins for O(1) retrieval.       │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 3 — Decision Layer                                        │
+│  The five-stage hierarchy that fires on every malloc(sz) call.  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+                             ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  STAGE 4 — Maintenance Layer                                     │
+│  How free() coalesces neighbors and keeps the heap from rotting.│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📍 Stage 1 — The Anatomy of a Chunk
+
+**File:** `dlmalloc_DECODER_segment_1.md`
+**Layer:** Physical — the shape of memory at rest.
+
+The foundation of everything that follows. Before a single allocation or free can make sense, you must understand `struct malloc_chunk` — the invisible metadata frame that wraps every block of memory `dlmalloc` manages.
+
+**Core concepts covered:**
+
+- The `malloc_chunk` struct: `prev_foot`, `head`, and the two flag bits hidden in the low-order bits of every chunk size.
+- **Space-stealing via bit-packing:** how the same physical bytes serve different owners depending on the state of adjacent chunks.
+- **The offset trick:** why the pointer `malloc` returns to you is not the start of the chunk, and what sits 8–16 bytes behind it.
+- **The minimum size constraint:** why `malloc(1)` returns at least 16 or 32 bytes, and what that space is reserved for.
+
+**The goal:** Understand that every pointer you hold has a secret history behind it — and that `free` will read that history to do its work.
+
+---
+
+## 📍 Stage 2 — The Filing Cabinet
+
+**File:** `dlmalloc_DECODER_segment_2.md`
+**Layer:** Organisational — how freed memory is indexed for retrieval.
+
+When `free(p)` is called, the memory is not forgotten — it is catalogued. This stage covers the four bin types that make O(1) allocation possible across the full range of allocation sizes.
+
+**Core concepts covered:**
+
+- **Fastbins** — singly linked, LIFO, no immediate coalescing. The high-speed path for small, short-lived objects.
+- **SmallBins** — doubly linked, FIFO, exact-fit per size class. One array index, one chunk, zero searching.
+- **Unsorted Bin** — the waiting room. A single-level cache for recently freed chunks, sorted lazily on the next allocation pass.
+- **TreeBins** — a bitwise digital trie for large chunks. Sorted by bit significance from MSB to LSB; best-fit search in O(log n), often O(1) via bitmap hint.
+- **The `bin_index` function:** how a size becomes an array index in a single instruction using `__builtin_clz`.
+
+**The goal:** Stop seeing the heap as one pile of memory. See it as a hierarchy of sorted buckets, each optimised for a specific size class and access pattern.
+
+---
+
+## 📍 Stage 3 — The Allocation Lifecycle
+
+**File:** `dlmalloc_DECODER_segment_3.md`
+**Layer:** Decision — how `malloc` selects, splits, and returns a chunk.
+
+Every call to `malloc(sz)` triggers a five-stage decision hierarchy. The allocator tries the cheapest path first and escalates only on failure, treating an OS call as a last resort. This stage traces that hierarchy from entry point to returned pointer.
+
+**Core concepts covered:**
+
+- **The five-stage desperation hierarchy:** Fastbins → SmallBins → Unsorted Bin drain → TreeBin best-fit → Wilderness carve.
+- **Splitting and remaindering:** how a 500-byte chunk satisfies a 100-byte request and what happens to the 400-byte leftover.
+- **The bitmap hint:** how a bitmask over all bins converts a multi-bin search into a single hardware instruction.
+- **The Wilderness (top chunk):** the contiguous slab at the heap's high-water mark — the allocator's last local resource before calling the OS.
+- **`sys_alloc`:** the boundary where `dlmalloc` ends and the operating system begins.
+
+**The goal:** Understand that allocation speed is determined almost entirely by how rarely the hierarchy reaches Stage 5 — and why the fast paths are designed to be hit the overwhelming majority of the time.
+
+---
+
+## 📍 Stage 4 — The Act of Reclamation
+
+**File:** `dlmalloc_DECODER_segment_4.md`
+**Layer:** Maintenance — how `free` prevents the heap from becoming Swiss cheese.
+
+The most mathematically elegant part of `dlmalloc`. Without this stage, every long-running process would eventually fragment into thousands of useless small holes. This stage covers the boundary tag system, the four-step merge logic, and the most famous security hardening in allocator history.
+
+**Core concepts covered:**
+
+- **External fragmentation:** why having 200 bytes free in two non-adjacent 100-byte holes is functionally worse than having 200 bytes in one contiguous block.
+- **The boundary tag system:** how `prev_foot` makes backward merging O(1) without any heap traversal.
+- **The four-step `free` logic:** validity check → backward merge → forward merge → wilderness hand-off.
+- **The `unlink` macro:** the code that removes a chunk from a doubly linked bin list — and the site of a decade of heap exploitation.
+- **The `FD->bk != P || BK->fd != P` invariant:** the two-line check that ended an entire class of exploits.
+- **Deferred coalescing and `malloc_consolidate`:** the direct ancestor of thread-local caching in modern allocators.
+
+**The goal:** Master the logic that keeps a process running for weeks without exhausting its heap — and understand why `free` is, in many ways, more complex than `malloc`.
+
+---
+
+## 🏆 The "Final Boss" Challenge
+
+Complete all four stages first. Then attempt this:
+
+**The Heap Walker**
+
+Write a program that:
+
+1. Allocates 10 blocks of random sizes between 16 and 512 bytes, storing each pointer in an array.
+2. Frees five of them — chosen so that at least two freed blocks are physically adjacent.
+3. Traverses the heap manually, starting from the first allocated address, by reading each chunk's `head` field to compute the next chunk's address, continuing until it reaches the `top` chunk.
+4. For each chunk encountered, prints its address, size, and in-use status derived from the flag bits.
+
+A correct implementation will show the merged chunks as single larger entries in the traversal output. The coalesced blocks will be gone — replaced by one chunk whose size is the sum of the originals plus their headers. If your traversal output matches your mental model of what the merges should have produced, you have understood `dlmalloc` at the level of its author.
+
+---
+
+## 📚 Essential Reading — In Order
+
+| Resource | Read When |
+|---|---|
+| [A Memory Allocator — Doug Lea](https://gee.cs.oswego.edu/dl/html/malloc.html) | Before Stage 1. Doug's own design notes. The authoritative "why" behind every decision. |
+| [`malloc.c` — Doug Lea](https://gee.cs.oswego.edu/pub/misc/malloc.c) | Alongside each segment. The source itself. |
+| [Phrack 57 — "Once Upon a `free()`"](http://phrack.org/issues/57/9.html) | After Stage 4. The canonical analysis of how the `unlink` logic was exploited before the invariant check existed. |
+| [Understanding the Heap by Breaking It — BlackHat](https://www.blackhat.com/presentations/bh-usa-07/Ferguson/Whitepaper/bh-usa-07-ferguson-WP.pdf) | After Phrack. The modern follow-up covering how post-hardening techniques evolved. |
+
+---
+
+
+The Linux Scheduler is already on the roadmap for `01_Foundations / Concurrency`. The other two represent new wings of the repository.
+
+---
+
+*Filed under: `01_Foundations / Memory_Management` · Master Index · Four segments complete*

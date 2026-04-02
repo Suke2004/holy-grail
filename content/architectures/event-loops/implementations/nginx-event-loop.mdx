@@ -1,0 +1,117 @@
+---
+title: "nginx event decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `ngx_event.c` — Nginx Event Core
+
+> **Domain:** High-Performance Web Servers / Event Loops / Scalable Networking
+> **Source:** [`nginx/src/event/ngx_event.c`](https://github.com/nginx/nginx/blob/master/src/event/ngx_event.c)
+> **Lineage:** Nginx redefined the internet by solving the C10k problem — serving 10,000 concurrent connections on hardware that Apache would buckle under. `ngx_event.c` is the architectural reason why.
+
+> *"This file is the heart of Nginx. While the Linux kernel handles raw hardware interrupts, `ngx_event.c` is the high-level manager that translates those interrupts into a web server capable of 100,000 simultaneous connections on a single CPU core."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*Why does this file exist?*
+
+The dominant web server architecture before Nginx — epitomised by Apache — assigned one thread or process per connection. Serve 10,000 simultaneous users and you spawn 10,000 threads. The operating system spends more time switching between them than doing useful work. Memory climbs. Latency spikes. The server falls over.
+
+Nginx's answer was architectural, not incremental: **one worker thread, thousands of connections**. Rather than waiting on each connection individually, `ngx_event.c` manages a loop that asks the kernel one question at a time: *who is ready right now?* It processes only the connections that have data, ignores the ones that don't, and never blocks waiting for any single client.
+
+The technique is not unique to Nginx — but `ngx_event.c` is the clearest, most studied implementation of it in production C. It is the file that proved event-driven I/O could replace thread-per-connection at internet scale.
+
+> **The Core Truth:** Waiting is the enemy of performance. A thread blocked on a slow client is a thread that cannot serve a fast one. The entire architecture of `ngx_event.c` exists to ensure that no thread ever waits — only the kernel waits, and it notifies the worker the instant anything is ready.
+
+---
+
+## 📜 The "Literate" Map: The Pulse of the Server
+
+| Function | ~Line | The Secret Hidden in the Code |
+| :--- | :---: | :--- |
+| `ngx_process_events_and_timers` | 200 | **The Grand Loop.** The single most important function in Nginx. Balances two competing demands — network events and timer expiry — in one unified pass. Ensures that a stalled connection cannot delay a scheduled timeout from firing. Every request Nginx ever served passed through this function. |
+| `ngx_add_event` / `ngx_del_event` | 100 | **The Abstraction Layer.** Nginx runs on Linux (`epoll`), FreeBSD (`kqueue`), Solaris (`/dev/poll`), and Windows (`select`). These two functions are the universal interface — above them, all code is platform-agnostic; below them, each OS gets its own implementation module. |
+| `ngx_event_accept` | 600 | **The Birth of a Connection.** Where a raw kernel socket becomes an `ngx_connection_t` — the struct that carries a connection through its entire lifecycle. Reading this function is reading the moment a TCP handshake becomes Nginx's responsibility. |
+| `ngx_event_timer_alarm` | 350 | **The Heartbeat.** Manages a red-black tree of pending timeouts. If a client has not sent data within the configured keepalive window, this logic fires the timeout, releases the connection struct, and reclaims the memory. Silence costs RAM — this function makes silence expensive. |
+
+---
+
+## 🧠 Mental Models to Master
+
+Before the event loop makes intuitive sense, three ideas must be internalised:
+
+**1. The Single Chef**
+
+A thread-per-connection server is one chef per omelette — each chef stands idle while their egg sets. Nginx is one chef managing fifty pans simultaneously, touching each pan only when it sizzles. The sizzle is the event. The chef never stands still. The kitchen produces more food with fewer people because no cook ever waits.
+
+**2. The `epoll` Contract**
+
+`epoll` is a Linux kernel subsystem that maintains a list of file descriptors the calling process cares about. Rather than asking "is socket 4,721 ready?" for each of ten thousand sockets — which is O(n) — Nginx registers all its sockets with `epoll` once and then calls `epoll_wait`. The kernel returns only the sockets that have activity. The call is O(1) in the number of total connections; it scales with the number of *active* connections, not the total.
+
+```
+Without epoll (select/poll):    With epoll:
+Check socket 1 — quiet          epoll_wait() ──► [socket 47, socket 3821]
+Check socket 2 — quiet          Process socket 47
+Check socket 3 — quiet          Process socket 3821
+...                             Sleep until next event
+Check socket 9999 — active!
+Process socket 9999
+```
+
+The difference between these two columns is the C10k solution.
+
+**3. Non-Blocking I/O and `EAGAIN`**
+
+Every read and write operation in `ngx_event.c` is non-blocking. When Nginx calls `read()` on a socket and no data has arrived yet, the kernel does not block the thread — it returns immediately with the error code `EAGAIN` ("try again later"). `ngx_event.c` is the logic that remembers to try again: it registers the socket with `epoll` for readability, returns to the event loop, and resumes processing that connection the moment the kernel signals that data is available. The thread never sits idle. It is always doing something else.
+
+---
+
+## ⚡ The Modern Mirror
+
+*How has this architecture propagated forward?*
+
+**Node.js / `libuv`**
+The entire Node.js runtime is built on `libuv`, an event loop library that abstracts `epoll`, `kqueue`, and IOCP (Windows) behind a single API. The mental model — one thread, event-driven callbacks, non-blocking I/O — is a direct descendant of the pattern `ngx_event.c` proved at scale in production. Node.js is `ngx_event.c` made accessible to JavaScript developers.
+
+**Rust: `mio` and `tokio`**
+`mio` is Rust's thin wrapper over `epoll`/`kqueue`, providing the same O(1) readiness notification that powers Nginx. `tokio` builds an async runtime on top of `mio`, giving Rust programs structured concurrency — `async/await` syntax — backed by the same kernel mechanism. The type system adds memory safety guarantees that C cannot provide, but the I/O model is identical to what `ngx_event.c` implements manually.
+
+**`io_uring`**
+The next evolution of Linux I/O. Rather than requiring the application to call `epoll_wait` and then issue a separate `read` syscall, `io_uring` lets the application and kernel share a ring buffer in memory. Nginx submits I/O requests by writing to the ring; the kernel completes them and writes results back — no context switch required. The architectural intent of `ngx_event.c` (eliminate all waiting) taken to its logical conclusion: eliminate even the system call boundary.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The Timer Resolution Trade-off**
+
+Nginx checks for expired timers once per event loop iteration, but the precision of that check is governed by a configurable timer resolution. Build Nginx locally and modify the timer resolution between 1ms and 100ms. Measure CPU usage under a constant load at both settings.
+
+At 1ms, the CPU wakes up frequently to check timers, most of which have not expired. At 100ms, it checks less often but may fire timeouts up to 100ms late. The correct value for a production system depends on the timeout sensitivity of the workload — this is **timer coalescing**, the same trade-off made in the Linux kernel's `nohz` mode.
+
+**2. The Thundering Herd**
+
+Search for `accept_mutex` in the source. This was one of Nginx's original architectural innovations. When multiple worker processes exist, a new incoming connection causes the kernel to wake all of them simultaneously — the "thundering herd." Only one can accept the connection; the rest waste a wake-up cycle.
+
+`accept_mutex` is a cross-process lock that ensures only one worker listens for new connections at a time. Find where it is acquired and released, and trace what happens to the other workers during the window when one worker holds the mutex. Then look at what changed in Nginx 1.11.3: the `reuseport` socket option, which delegates the thundering herd problem to the kernel entirely and makes `accept_mutex` obsolete on modern Linux.
+
+**3. The Connection Limit**
+
+Find where `worker_connections` bounds the number of active `ngx_connection_t` structs the event loop will maintain. Set it to a very low value (e.g., 4) and flood a local Nginx instance with concurrent connections using `ab` or `wrk`. Identify in `ngx_event_accept` exactly where the limit is checked and what response is sent to connections that arrive after the pool is exhausted. You are finding the precise line where Nginx says no.
+
+---
+
+## 📖 Recommended Reading
+
+- [The C10k Problem — Dan Kegel](http://www.kegel.com/c10k.html) — The 1999 paper that named the problem Nginx was built to solve. Read this before the source.
+- [epoll: The Definitive Guide — Marek Majkowski, Cloudflare](https://idea.popcount.org/2017-02-20-epoll-is-fundamentally-broken-1/) — A deep technical analysis of `epoll`'s behaviour under real load, including its surprising failure modes. Essential context for understanding why `io_uring` exists.
+- [The Architecture of Nginx — aosabook.org](http://www.aosabook.org/en/nginx.html) — A chapter-length architectural overview written by Andrew Alexeev. The highest-quality prose description of how `ngx_event.c` fits into the larger system.
+- [io\_uring and the Future of Linux I/O — Jens Axboe](https://kernel.dk/io_uring.pdf) — The design paper for `io_uring` by its author. Read after the source to understand what comes after `epoll`.
+
+---
+
+*Filed under: `02_Architectures / Event_Loops` · Lineage: ngx_event.c → libuv (Node.js) → mio/tokio (Rust) → io_uring*

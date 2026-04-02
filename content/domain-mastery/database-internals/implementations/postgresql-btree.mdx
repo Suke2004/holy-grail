@@ -1,0 +1,146 @@
+---
+title: "PostgreSQL BTree decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# The Decoder: `nbtsearch.c` — PostgreSQL B-Tree Search
+
+> **Domain:** Database Internals / Indexing / High-Concurrency Data Structures
+> **Source:** [`postgres/src/backend/access/nbtree/nbtsearch.c`](https://github.com/postgres/postgres/blob/master/src/backend/access/nbtree/nbtsearch.c)
+> **Lineage:** PostgreSQL is the world's most advanced open-source relational database. This file implements the Lehman & Yao concurrent B-tree algorithm — allowing thousands of readers and writers to navigate the same index simultaneously without locking the entire table.
+
+> *"A database index is a living organism. Pages split while you are reading them. Searching one requires logic that can follow a moving target — or risk arriving at a dead end while the data walks away to the right."*
+
+---
+
+## The "Deep Root" Context
+
+*Why does this file exist?*
+
+A table with one billion rows cannot be searched by scanning every row — that is O(n), and at modern data volumes, O(n) is not slow, it is impossible. A B-Tree (Balanced Tree) reduces any search to roughly three to five page reads, O(log n), regardless of how many rows the table contains. It is the data structure that makes relational databases practical at scale.
+
+But `nbtsearch.c` solves a harder problem than a textbook B-tree. In a live database, the tree is never still. While one transaction searches a page, another may be splitting it — inserting a value that causes the page to divide into two, moving half its contents to a new right-hand neighbour. A naive searcher following a pointer to that page will arrive to find that the value they wanted is no longer there. It moved right. Without recovery logic, the search fails silently.
+
+The Lehman & Yao algorithm, published in 1981, solves this problem with a single structural invariant: every page carries a **right-link pointer** to its right neighbour, and every page carries a **high key** — the maximum value that can legally reside on that page. If a searcher arrives and finds their target exceeds the high key, they follow the right-link. The data may have moved, but it cannot hide.
+
+> **The Core Truth:** A database index is a living structure. `nbtsearch.c` is not just a search algorithm — it is a protocol for navigating a data structure that other processes are actively reshaping. Every design decision in this file exists to handle the gap between when you decided where to look and when you actually arrive.
+
+---
+
+## 📜 The "Literate" Map: Navigating the Tree
+
+This file does not simply find a value. It manages **positions** within a concurrently modified structure, maintaining correctness guarantees at every step of the descent.
+
+| Function | ~Line | The Secret Hidden in the Code |
+| :--- | :---: | :--- |
+| `_bt_search` | 50 | **The Entry Point.** Descends from root to leaf, acquiring a latch on each child page before releasing the parent's. This is *latch coupling* — the minimum footprint needed to descend safely. At no point does the function hold locks on two levels simultaneously any longer than it must. The entire concurrent safety of the search descends from this discipline. |
+| `_bt_moveright` | 400 | **The Lehman & Yao Invariant.** If a page was split between the moment you were directed here and the moment you arrived, your target has moved to the right neighbour. This function detects that condition — by comparing the search key against the page's high key — and follows the right-link until it lands on a page that could legally contain the target. It is the recovery logic that makes concurrent search correct. |
+| `_bt_binsrch` | 600 | **The Micro-Search.** Once inside a single 8KB page, the target key is located with a classical binary search over the page's item array. It uses a pluggable comparison function rather than hardcoded comparison logic — because PostgreSQL's B-tree must work identically for integers, text, timestamps, JSONB, geometric types, and any user-defined type that provides an operator class. |
+| `_bt_readpage` | 1000 | **The Buffer Manager Interface.** Pages are not read from disk directly — they are loaded into a shared memory buffer pool and pinned there for the duration of the read. This function is where `nbtsearch.c` meets the storage layer: the boundary between the index logic and the physical I/O subsystem. |
+
+---
+
+## 🧠 Mental Models to Master
+
+**1. Latches vs. Locks — Pins and the Cost of Correctness**
+
+B-tree operations distinguish between two levels of access control. A **lock** is a transaction-level guarantee — it persists for the duration of a query or transaction and is managed by the lock manager. A **latch** (or pin) is a physical-level guarantee — it protects a single buffer page for the microseconds needed to read or modify it, and is released as soon as the operation completes.
+
+`nbtsearch.c` operates almost exclusively with latches. Holding a latch on a page says: "I am reading this page right now — do not evict it from the buffer pool." It does not say "no one else may read this page" — multiple readers latch the same page simultaneously. This distinction is what allows thousands of concurrent reads without contention. A full lock on an index page during a search would serialise every query touching that index; a latch costs almost nothing and contends with almost no one.
+
+**2. The High Key and the Right-Link**
+
+Every internal and leaf page in a PostgreSQL B-tree carries two structural elements that do not exist in textbook B-trees:
+
+- The **high key**: the maximum value that is allowed to reside on this page. If the search key exceeds the high key, the target cannot be here — follow the right-link.
+- The **right-link**: a direct pointer to the next page at the same level of the tree.
+
+Together, these two fields implement the Lehman & Yao guarantee. A page split is not atomic from the searcher's perspective — during the split, the new right page exists and holds data, but the parent's downlink to it has not yet been inserted. The right-link allows a searcher to reach the new page without going back through the parent. The high key tells the searcher whether they need to.
+
+```
+Before split:             During / after split:
+                                              right-link
+[ Page A: keys 1–100 ]    [ Page A: 1–50 ] ──────────► [ Page B: 51–100 ]
+                                high key: 50              high key: 100
+
+Search for key 73:
+  Arrives at Page A.
+  73 > high key (50).
+  Follow right-link → Page B.
+  73 ≤ high key (100).
+  Binary search within Page B. Found.
+```
+
+**3. The Page Layout**
+
+A PostgreSQL page is exactly 8KB. Its layout is fixed:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Page Header (24 bytes)                             │
+│  — LSN, flags, free space pointers                  │
+├─────────────────────────────────────────────────────┤
+│  Item ID Array  (grows downward from header)        │
+│  — array of (offset, length) pairs, one per tuple   │
+├─────────────────────────────────────────────────────┤
+│  Free Space                                         │
+├─────────────────────────────────────────────────────┤
+│  Tuple Data     (grows upward from special space)   │
+│  — actual key + heap pointer for each index entry   │
+├─────────────────────────────────────────────────────┤
+│  Special Space  (last 16 bytes)                     │
+│  — right-link pointer, page level, B-tree flags     │
+└─────────────────────────────────────────────────────┘
+```
+
+`_bt_binsrch` searches the Item ID Array. `_bt_moveright` reads the right-link from Special Space. The high key is stored as the first item in the Item ID Array on non-rightmost pages. Every function in `nbtsearch.c` navigates this layout precisely.
+
+---
+
+## ⚡ The Modern Mirror
+
+*How has this architecture evolved — and where has it been superseded?*
+
+**LSM Trees (RocksDB, Cassandra, LevelDB)**
+Log-Structured Merge Trees write all new data sequentially to an append-only log, deferring the cost of organisation to a background compaction process. Writes are O(1) — always sequential. Reads are more expensive: they may require checking multiple sorted levels. B-trees write in-place, which is expensive for writes but makes reads fast and predictable. Understanding `nbtsearch.c` gives you the precise intuition for when a B-tree's read performance matters enough to pay the write cost — and when it does not.
+
+**Index-Only Scans**
+`nbtsearch.c` contains logic to satisfy certain queries entirely from the index, without reading the main heap table at all. If a query selects only columns that are included in the index, and the index's visibility map confirms the tuples are visible to the current transaction, the search terminates at the leaf page. One file access instead of two. This is one of the most impactful performance features in PostgreSQL for read-heavy analytical workloads.
+
+**NVMe and Cache-Conscious B-Trees**
+Traditional B-trees were designed around the assumption that disk seeks were the bottleneck. On NVMe SSDs, random I/O is fast enough that the CPU's last-level cache becomes the binding constraint — the cost of pointer chasing through pages that aren't in cache. Research B-tree variants (FAST, ART, Bw-Tree) restructure the node layout and pointer discipline to maximise cache locality. `nbtsearch.c` represents the mature disk-era design; its successors are cache-era redesigns of the same invariants.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The Page Split Diagram**
+
+Do not write code for this one. Draw it.
+
+Take three boxes representing pages. Label the root, and give the leaf page (Page A) keys 1 through 100. Now simulate an insert that causes Page A to split: Page A retains keys 1–50, Page B receives keys 51–100, and Page B's right-link points to whatever Page A's right-link pointed to previously.
+
+Now place a search for key 73 that was in-flight — it was directed to Page A by the root before the split completed, but arrives after it. Trace the path through `_bt_moveright`: check key 73 against Page A's high key (50), follow the right-link to Page B, confirm 73 ≤ Page B's high key (100), perform binary search. If your diagram makes this path unambiguous, you understand the Lehman & Yao invariant at the level of its inventors.
+
+**2. The Generic Comparison Function**
+
+Find where `_bt_binsrch` calls its comparison function. It does not call `strcmp` or `<` directly — it calls a function pointer resolved from the index's operator class. Look up what an operator class is in PostgreSQL's documentation. Then consider: what must a user-defined type provide to be indexable by a B-tree? What happens if the comparison function is not a strict total order? What correctness guarantees does `nbtsearch.c` lose if the comparison function is inconsistent? The answer is not in the code — it is in the mathematical preconditions the code silently assumes.
+
+**3. The Buffer Latch Removal**
+
+Find the call to `LockBuffer(buf, BT_READ)` in `_bt_readpage`. Read the comment above it. Now trace what would happen if that call were removed: another backend modifies the page between the moment `_bt_readpage` reads the item count and the moment it reads the first item. The item count says five entries; the page now has four. The binary search in `_bt_binsrch` accesses an offset past the end of the item array. On most runs: a wrong result. On unlucky alignment: a segfault. The single latch acquisition is the entire boundary between correctness and undefined behaviour. One line. Total consequence.
+
+---
+
+## 📖 Recommended Reading
+
+- [Concurrent Operations on B-Trees — Lehman & Yao (1981)](https://www.cs.umb.edu/~poneil/BTreeLehman.pdf) — The original paper this code implements. Read the abstract and Section 3 before reading the source. The algorithm will be immediately recognisable.
+- [PostgreSQL B-Tree Implementation — Official Docs](https://www.postgresql.org/docs/current/btree-implementation.html) — The PostgreSQL project's own description of how `nbtsearch.c` departs from the original Lehman & Yao paper and why. Authoritative and precise.
+- [*Database System Concepts* — Silberschatz, Korth, Sudarshan](https://db-book.com/) — Chapter 14 covers B+-trees at the level of rigour needed to read this source without confusion. The standard academic reference.
+- [The Internals of PostgreSQL — Hironobu Suzuki](https://www.interdb.jp/pg/) — A free, chapter-length treatment of PostgreSQL's buffer manager, heap structure, and index access methods. Read Chapter 1 (storage) and Chapter 9 (B-tree internals) alongside the source.
+
+---
+
+*Filed under: `03_Domain_Mastery / Database_Internals` · Lineage: Lehman & Yao (1981) → PostgreSQL nbtree → NVMe-optimised variants (Bw-Tree, ART)*

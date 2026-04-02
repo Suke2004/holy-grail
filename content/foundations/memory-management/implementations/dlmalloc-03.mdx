@@ -1,0 +1,168 @@
+---
+title: "dlmalloc decoder 03"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `malloc.c` — Segment 3 of 4
+## *The Allocation Lifecycle — From Request to Pointer*
+
+> **Domain:** Memory Management / Heap Allocation / Systems Programming
+> **Source:** [`Doug Lea's dlmalloc`](https://g.oswego.edu/dl/html/malloc.html)
+> **Segment Focus:** The request path — the five-stage decision hierarchy that executes every time you call `malloc(sz)`.
+
+> *"Segment 2 was the warehouse. Segment 3 is the customer service logic — the high-stakes decision tree that fires the moment you ask for memory."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*What actually happens inside `malloc`?*
+
+The allocation logic in `dlmalloc` is not a single search. It is a **tiered strategy** — a hierarchy of increasingly expensive options, tried in sequence. The allocator attempts the cheapest path first, falls back to the next tier only on failure, and treats a call to the operating system as a last resort.
+
+This design reflects a core insight about allocator workloads: most allocation requests are small, short-lived, and recently freed memory is very likely to match. The fast paths exploit this pattern. The slow paths exist for the cases that don't fit.
+
+The logic lives primarily in two functions: `public_mALLOc` (the public entry point that handles locking and edge cases) and `_int_malloc` (the internal engine where the five-stage hierarchy executes).
+
+> **The Core Truth:** The allocator is a pessimist. It does not scan everything it has — it checks the cheapest places first and gives up on each tier the moment it finds a match. Speed comes from knowing when to stop looking, not from looking harder.
+
+---
+
+## 📜 The "Literate" Map: The Five Stages of Allocation
+
+Every call to `malloc(sz)` walks this hierarchy from top to bottom, exiting the moment any stage succeeds.
+
+| Stage | What It Checks | The Strategy |
+| :--- | :--- | :--- |
+| **1 — The Fast Path** | Fastbins | For tiny requests, check the singly linked fastbin for the corresponding size class. No merging, no splitting, no metadata updates beyond unlinking the head node. A cache hit here costs fewer instructions than a function call. |
+| **2 — The Exact Fit** | SmallBins | Look in the specific bin index for the exact requested size. If a chunk exists, unlink it from the doubly linked list and return it immediately. One array lookup, one pointer update, done. |
+| **3 — The Housekeeping Pass** | Unsorted Bin | Before escalating further, drain the unsorted bin: walk every chunk waiting in the "recently freed" queue and sort it into its proper SmallBin or TreeBin. A request that matches during this pass is returned immediately. This stage trades a small latency now for better bin occupancy on all future requests. |
+| **4 — The Best Fit** | TreeBins | For large requests, traverse the bitwise trie to find the smallest available chunk that is *at least* as large as the request. Best-fit minimises wasted space at the cost of a tree traversal — still O(log n), often O(1) in practice due to the bitmap hint described below. |
+| **5 — The Last Resort** | Wilderness (top chunk) | If every bin is exhausted, carve the request directly from the `top` chunk — the large, contiguous slab at the high end of the heap. If even the top chunk is too small, call the OS (`brk` or `mmap`) to extend it. This is the only stage that ever leaves the process. |
+
+---
+
+## 🧠 Mental Models
+
+**Splitting and Remaindering**
+
+This is the most consequential operation in the allocation lifecycle. When no exact-fit chunk exists, the allocator locates the smallest chunk that exceeds the requested size and splits it.
+
+```
+Request: malloc(100)
+Found:   free chunk of 500 bytes
+
+Before split:
+[ ← 500 bytes, free → ]
+
+After split:
+[ ← 100 bytes, returned to caller → | ← 400 bytes, remainder → ]
+                                              │
+                                      inserted into the
+                                      appropriate bin
+```
+
+The 400-byte remainder is not wasted — it is immediately inserted into the bin that matches its size, available for the next request. This is how `dlmalloc` prevents **internal fragmentation**: you receive exactly as much memory as alignment requires, and no more.
+
+The split itself is constant time: compute the boundary, write two new chunk headers, update one bin. The remainder's insertion is also constant time for SmallBins and O(log n) for TreeBins.
+
+**The Bitmap Hint**
+
+`dlmalloc` maintains a bitmask alongside the bin array where each bit represents one bin — `1` if the bin contains at least one free chunk, `0` if it is empty. Before any bin search, the allocator masks this bitmap against the target size to find the *next populated bin at or above* the requested size in a single bitwise operation.
+
+On architectures with a hardware *Count Leading Zeros* instruction (the same `__builtin_clz` from Segment 2), this bitmap scan is a single CPU instruction. It transforms a search over dozens of empty bins into a direct jump to the first non-empty one.
+
+---
+
+## ⚡ The Modern Mirror: Speculative and Thread-Local Allocation
+
+**The Bottleneck at Stage 5**
+
+Calling the OS at Stage 5 requires a system call — a context switch that costs hundreds of nanoseconds, plus a global heap lock in a multi-threaded program. Every thread that needs memory at the same moment queues up and waits. In high-concurrency applications this single point of serialisation becomes the dominant cost in the entire allocation system.
+
+**Thread-Local Arenas**
+
+Modern allocators — `ptmalloc2` (glibc), `jemalloc`, `tcmalloc`, `mimalloc` — solve this by giving each thread its own private allocation arena: a separate heap with its own bins, its own top chunk, and no shared lock. Stage 5 for thread A calls the OS independently of Stage 5 for thread B. The threads never contend.
+
+`mimalloc` extends this further with **speculative allocation**: it requests memory from the OS in large, fixed-size segments ahead of demand, so that Stage 5 — even when it fires — is a cheap pointer bump into a pre-mapped region rather than a live system call.
+
+The five-stage hierarchy in `dlmalloc` remains the conceptual foundation. Every modern allocator is a variation of this hierarchy with the contention points removed.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The `strace` Probe**
+
+Run the following two-line program under `strace -e brk,mmap` on Linux:
+
+```c
+#include <stdlib.h>
+int main(void) {
+    void *a = malloc(10);          /* tiny — served from existing heap  */
+    void *b = malloc(1024 * 1024); /* 1 MB — likely triggers mmap       */
+    free(b);
+    free(a);
+    return 0;
+}
+```
+
+The first `malloc` should produce no system calls — the heap was extended at program startup and the top chunk has space. The second should produce an `mmap` call. The exact threshold where `dlmalloc` switches from carving the top chunk to issuing `mmap` is controlled by the `MMAP_THRESHOLD` parameter (default 128 KB in most builds). Change the allocation size around that boundary and watch the system call appear and disappear. You are watching Stage 5 fire in real time.
+
+**2. The Remainder Inspection**
+
+Allocate a large block, free it, then allocate a smaller block from the same region:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    void *large = malloc(2000);
+    free(large);
+
+    void *small = malloc(500);
+
+    /* The remainder chunk begins immediately after the 500-byte allocation.
+       Its header sits at small + 500 + alignment_padding bytes. */
+    size_t *remainder_header = (size_t *)((char *)small + 512); /* adjust for alignment */
+    printf("Remainder chunk size: %zu bytes\n", *remainder_header & ~7UL);
+
+    free(small);
+    return 0;
+}
+```
+
+You should see a remainder header reporting roughly 1,480–1,496 bytes — the original 2,000 minus the 500-byte allocation, minus the two chunk headers, rounded to alignment. The split, made visible.
+
+**3. The Five-Stage Trace**
+
+Insert `printf` calls into a local build of `dlmalloc` at the entry point of each of the five stages. Run a workload that mixes small, medium, and large allocations. Read the trace. You will see exactly which stage serves each request — and you will notice that the overwhelming majority of calls never make it past Stage 2.
+
+---
+
+## 📖 Key Functions to Find in the Source
+
+| Function | What It Does |
+|---|---|
+| `public_mALLOc` | Public entry point — handles the global lock, parameter validation, and edge cases before handing off to `_int_malloc` |
+| `_int_malloc` | The five-stage hierarchy itself — the most important function in the file |
+| `tmalloc_large` | The TreeBin search — the best-fit traversal for requests above 512 bytes |
+| `sys_alloc` | Stage 5 — the only function that crosses the boundary between the allocator and the OS |
+
+---
+
+## 🗺️ Where You Stand
+
+| Segment | Title | Status |
+|---|---|---|
+| **1 of 4** | The Anatomy of a Chunk | ✦ complete |
+| **2 of 4** | The Filing Cabinet | ✦ complete |
+| **3 of 4** | The Allocation Lifecycle | ✦ complete |
+| **4 of 4** | The Act of Reclamation | How `free` coalesces neighbors and prevents the heap from becoming Swiss cheese |
+
+---
+
+*Filed under: `01_Foundations / Memory_Management` · Part 3 of 4 · Lineage: dlmalloc → ptmalloc2 (glibc) → jemalloc → tcmalloc → mimalloc*

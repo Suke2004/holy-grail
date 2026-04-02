@@ -1,0 +1,171 @@
+---
+title: "dlmalloc decoder 04"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `malloc.c` — Segment 4 of 4
+## *The Act of Reclamation — Coalescing*
+
+> **Domain:** Memory Management / Heap Allocation / Systems Programming
+> **Source:** [`Doug Lea's dlmalloc`](https://g.oswego.edu/dl/html/malloc.html)
+> **Segment Focus:** The `free(p)` lifecycle — the boundary tag system, immediate coalescing, and the war against heap fragmentation.
+
+> *"Segment 3 was the architect building the structure. Segment 4 is the demolition and recycling team. Without this logic, every program would eventually succumb to Swiss Cheese Syndrome — thousands of tiny free holes that are individually useless and collectively tragic."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*What is fragmentation, and why is it fatal?*
+
+Allocate three 100-byte blocks — call them A, B, and C. Free A and B. You now have 200 bytes of free memory. But if that memory remains as two separate 100-byte holes, a request for 150 bytes will fail — not because the memory doesn't exist, but because no single contiguous chunk is large enough to satisfy it.
+
+This is **external fragmentation**: the heap has the capacity but not the contiguity. Left unchecked, a long-running process accumulates thousands of these holes until it is functionally out of memory while technically holding gigabytes free.
+
+> **The Core Truth:** In memory management, entropy is the enemy. Freed memory naturally fragments into smaller and smaller pieces over time. `free` must actively fight this tendency — merging adjacent free blocks on every single call — to keep the heap usable over the lifetime of the process.
+
+`dlmalloc` defeats fragmentation with a **Boundary Tag** system: metadata embedded at both ends of every chunk that allows the allocator to locate and merge any pair of adjacent free chunks in constant time O(1), with no heap traversal required.
+
+---
+
+## 📜 The "Literate" Map: The `free()` Logic Flow
+
+The public entry point is `public_fREe`. The merging logic lives in its internal workhorse, `_int_free`. Every call to `free(p)` walks these four steps in sequence.
+
+| Step | The Action | The Mechanism |
+| :--- | :--- | :--- |
+| **1 — Validity Check** | `check_inuse_chunk` | Reads the `PREV_INUSE` bit of the *next* physical chunk. If the next chunk claims the current chunk is already free, a double-free has occurred — the allocator aborts immediately, before any list manipulation can be corrupted. |
+| **2 — Backward Merge** | Check `PREV_INUSE` in own header | If bit 0 is `0`, the physically preceding chunk is free. The allocator reads `prev_foot` (the size stored at the current chunk's base — Segment 1) to calculate the preceding chunk's header address, unlinks it from its bin, and extends it forward to absorb the current chunk. |
+| **3 — Forward Merge** | Inspect the next chunk's header | The next chunk's address is computed as `current_ptr + current_size`. If that chunk is free and is not the `top` chunk, it is unlinked from its bin and absorbed backward into the current chunk. |
+| **4 — Wilderness Hand-off** | Merge into the `top` chunk | If the newly merged chunk is now physically adjacent to `top` — the large free slab at the heap's high-water mark — it is not placed in any bin. It simply expands `top`, restoring the contiguous wilderness and making the maximum possible space available for future large requests. |
+
+---
+
+## 🧠 Mental Models
+
+**The Tile Floor**
+
+Imagine a row of floor tiles, each either occupied or free. When a tile is freed, the allocator looks left and right. If either neighbor is also free, the grout between them is broken and they become one larger tile. If both neighbors are free, all three merge into one. The goal is always to keep the empty space at the end of the row — the wilderness — as large and contiguous as possible.
+
+```
+Initial state:
+[ A: in use ][ B: in use ][ C: in use ][ ← top chunk → ]
+
+After free(B):
+[ A: in use ][ B: free,100 ][ C: in use ][ ← top chunk → ]
+
+After free(A):          ← backward merge fires
+[ A+B: free, 200 ][ C: in use ][ ← top chunk → ]
+
+After free(C):          ← forward merge into top fires
+[ ← top chunk, expanded by 300 bytes → ]
+```
+
+Three separate `free` calls produce not three small holes but one fully restored wilderness. No future allocation smaller than the combined size will ever fail due to fragmentation from these three blocks.
+
+**The Boundary Tag — Why O(1) Is Possible**
+
+Merging two chunks requires knowing where the *previous* chunk's header is — information that, on a raw heap, would require a linear scan from the beginning. The boundary tag system eliminates that scan entirely.
+
+Every free chunk stores its size at both its **head** (the front) and its **foot** (the very last word before the next chunk begins). To find the preceding chunk's header, the allocator reads `prev_foot` from the current chunk's base — a single memory read — and subtracts it from the current address. The merge is computed, not searched.
+
+---
+
+## ⚡ The Modern Mirror
+
+**The `unlink` Macro and the Most Famous Security Check in C**
+
+The merge operation requires unlinking a chunk from its doubly linked free list. The macro that does this — `unlink(P, BK, FD)` — was, for years, the most exploited piece of code in systems programming.
+
+The attack was elegant: by corrupting a free chunk's `fd` and `bk` pointers before `free` was called on an adjacent chunk, an attacker could cause the `unlink` macro to write an arbitrary 4-byte value to an arbitrary address in the process's memory space. One carefully crafted heap overflow, one call to `free`, and the stack return address or a function pointer table was overwritten with attacker-controlled data.
+
+Doug Lea's response — a single conditional added to `unlink` — stopped the attack class entirely:
+
+```c
+if (FD->bk != P || BK->fd != P)
+    corruption_error();
+```
+
+A forged pointer cannot satisfy this check: if `BK` is forged, then `BK->fd` will not point back to `P`. The invariant is trivially cheap to verify and catastrophically expensive to forge. This two-line addition hardened `malloc` against an entire generation of exploits. It remains one of the most instructive examples of security-through-invariant in production systems code.
+
+**Deferred Coalescing**
+
+Immediate coalescing — merging on every `free` call — is correct but costly under high-frequency workloads. In gaming engines or financial trading systems where `free` fires thousands of times per second, the constant unlinking and relinking of bin list nodes creates measurable lock contention in multi-threaded builds.
+
+Modern allocators respond with **deferred coalescing**: freed objects are placed into a thread-local cache first. Merging is deferred until the cache exceeds a threshold, at which point a single consolidation pass processes them in bulk. `tcmalloc`, `jemalloc`, and `mimalloc` all use variants of this strategy. The tradeoff is explicit: a bounded amount of extra fragmentation is accepted in exchange for dramatically lower contention on the hot path.
+
+`dlmalloc`'s `malloc_consolidate` function — which flushes all fastbins into the main bins for a single large coalescing pass — is the direct ancestor of this approach.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The Merge Observer**
+
+Witness coalescing directly:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    void *p1 = malloc(100);
+    void *p2 = malloc(100);   /* p2 should be physically adjacent to p1 */
+
+    printf("p1 address: %p\n", p1);
+    printf("p2 address: %p\n", p2);
+
+    free(p1);   /* p1 enters a bin — 100-byte hole */
+    free(p2);   /* p2 merges backward with p1 — one 200-byte hole */
+
+    void *p3 = malloc(180);   /* request larger than either original block */
+    printf("p3 address: %p\n", p3);
+
+    /* If p3 == p1, coalescing occurred and the merged block was reused. */
+    free(p3);
+    return 0;
+}
+```
+
+If `p3` is equal to `p1`, you have observed coalescing: the two 100-byte holes merged into one 200-byte chunk, and that chunk was split to satisfy the 180-byte request. If `p3` is not equal to `p1`, your `malloc` implementation uses fastbins for this size class and deferred the merge — also instructive.
+
+**2. The `unlink` Invariant**
+
+Find the `unlink` macro in the source. Locate the two lines that perform the `FD->bk != P || BK->fd != P` check. Trace backwards: which field in `malloc_chunk` is `FD`? Which is `BK`? Now trace forwards into `_int_free` and find exactly which merge path — backward or forward — invokes `unlink`. Draw the pointer graph for a three-chunk sequence where the middle chunk is being freed and both neighbors are free. Verify by hand that all six pointer updates in the full `unlink` leave every list in a valid state. If your diagram is consistent, you have understood the most security-critical code in `dlmalloc`.
+
+**3. The Consolidation Trigger**
+
+Call `malloc_consolidate` explicitly (it is a non-static function in most builds) after filling the fastbins with a sequence of same-size allocations and frees. Before calling it, inspect the fastbin's chunk count. After calling it, inspect the SmallBin that corresponds to the same size. You should see the fastbin empty and the SmallBin populated — the deferred merge made visible.
+
+---
+
+## 📖 Key Symbols and References
+
+| Symbol / Resource | What It Is |
+|---|---|
+| `public_fREe` | Public `free` entry point — locking, edge cases, delegation to `_int_free` |
+| `_int_free` | The four-stage coalescing logic — the most important function in this segment |
+| `unlink(P, BK, FD)` | The macro that removes a chunk from a doubly linked bin list — and the site of the most famous allocator hardening in history |
+| `malloc_consolidate` | Flushes all fastbins into the main bin structure for a bulk coalescing pass — the ancestor of deferred coalescing in modern allocators |
+| [Phrack 57 — "Once Upon a `free()`"](http://phrack.org/issues/57/9.html) | The canonical underground analysis of how the `unlink` logic was exploited, and how Doug Lea's fix closed it. Required reading after completing this segment. |
+
+---
+
+## 🏁 The Complete Decoder
+
+You have now traversed the full architecture of `dlmalloc`:
+
+| Segment | Title | The Layer |
+|---|---|---|
+| **1 of 4** | The Anatomy of a Chunk | Physical — the shape of memory at rest |
+| **2 of 4** | The Filing Cabinet | Organisational — how free chunks are indexed for retrieval |
+| **3 of 4** | The Allocation Lifecycle | Decision — how `malloc` selects, splits, and returns a chunk |
+| **4 of 4** | The Act of Reclamation | Maintenance — how `free` merges, coalesces, and restores the heap |
+
+This is the foundation on which every high-level language runtime is built. Python's object allocator, the JVM's young generation, V8's heap — each is a specialised descendant of the principles encoded in these four segments. Read the source now. The comments will speak differently than they did before.
+
+---
+
+*Filed under: `01_Foundations / Memory_Management` · Part 4 of 4 · Lineage: dlmalloc → ptmalloc2 (glibc) → jemalloc → tcmalloc → mimalloc*

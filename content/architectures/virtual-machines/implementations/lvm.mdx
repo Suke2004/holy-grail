@@ -1,0 +1,100 @@
+---
+title: "lvm decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `lvm.c` — The Lua Virtual Machine
+
+> **Domain:** Virtual Machines / Interpreters / Bytecode Execution
+> **Source:** [`lua/lua/lvm.c`](https://github.com/lua/lua/blob/master/lvm.c)
+> **Lineage:** Lua is the industry standard for game scripting — World of Warcraft, Roblox, Adobe Lightroom. `lvm.c` is the engine room that makes Lua the fastest interpreted scripting language in existence.
+
+> *"If `q_math.c` is a masterclass in optimization, `lvm.c` is a masterclass in architectural elegance — widely considered the gold standard of C programming."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*Why does this file exist?*
+
+Computers cannot execute human-readable source code directly at meaningful speeds. Most languages solve this by compiling source text down to **bytecode** — a compact sequence of numeric instructions stripped of syntax and ready for rapid interpretation. `lvm.c` is the **Virtual CPU** that reads those instructions and executes them.
+
+What makes Lua unusual — and what makes this file worth studying — is its execution model. While most VMs, including Java's JVM and Python's CPython, are **stack-based**, Lua is **register-based**. This means its instructions look far closer to real Assembly language than to the push/pop choreography of a stack machine. The result is a VM that is tiny enough to fit in a microwave's firmware, ANSI C compliant enough to compile on any hardware built in the last four decades, and fast enough to be the scripting runtime of choice for some of the most performance-sensitive software ever shipped.
+
+> **The Core Truth:** A Virtual Machine is just a massive `switch` statement inside an infinite loop. The faster you can jump between those `switch` cases, the faster your language becomes. Everything else in `lvm.c` is in service of making that jump as cheap as possible.
+
+---
+
+## 📜 The "Literate" Map
+
+The soul of this file is the `luaV_execute` function — a single, enormous loop that processes one OpCode at a time for as long as the program runs. Every secret in `lvm.c` lives inside or just adjacent to that loop.
+
+| Function / Macro | ~Line | The Secret Hidden in the Code |
+| :--- | :---: | :--- |
+| `vmdispatch(op)` | 800 | The **dispatch mechanism**. In optimized builds, Lua replaces the `switch` statement with *computed gotos* — a GCC extension that lets the CPU's branch predictor learn the jump targets. The result is measurably faster execution on real hardware. |
+| `RA`, `RB`, `RC` | 820 | Three macros that **unpack a 32-bit instruction** into its components: the operation code and up to three register indices. A clinic in bitmasking — showing how an entire CPU instruction can be encoded and decoded from a single integer. |
+| `OP_MOVE` | 850 | The simplest OpCode in the file and the clearest demonstration of the **register model**. There is no stack push or pop. A value moves from one array slot to another. One line. Zero ambiguity. |
+| `luaV_concat` | 600 | The cost of `..`. Follow the allocation and garbage collection triggers that fire during string concatenation and you will understand — viscerally — why joining 1,000 strings in a loop is slow in every dynamic language, not just Lua. |
+| `luaV_finishOp` | 750 | The machinery behind **coroutines**. This function shows how the VM snapshots its entire execution state so it can be suspended and resumed at exactly the instruction where it paused — the foundation of cooperative multitasking. |
+
+---
+
+## 🧠 Mental Models to Master
+
+Before the dispatch loop makes sense, these three ideas must be clear:
+
+**1. Register-Based vs. Stack-Based VMs**
+In a stack-based VM, the expression `a = b + c` requires four instructions: push `b`, push `c`, add (which pops both and pushes the result), store to `a`. In Lua's register model, it requires exactly one:
+
+```
+ADD A B C    -- A = B + C
+```
+
+This reduction in instruction count — called lower *instruction overhead* — is the single largest reason LuaJIT can rival compiled C++ in tight loops. Study how few instructions a simple Lua function generates.
+
+**2. The Tagged Union (`TValue`)**
+Lua is dynamically typed. Every value in the runtime is a `TValue` — a struct containing both the data and a *tag* that identifies its type (number, string, table, function, nil, etc.). Before any operation, `lvm.c` checks the tag. If the types don't match what the OpCode expects, the VM either coerces the values or raises a runtime error. This is how dynamic typing is implemented at the machine level.
+
+**3. The Program Counter (`pc`)**
+A single pointer that advances by one instruction after every OpCode. Watch what happens during `OP_JMP`: the `pc` does not advance — it leaps. That leap is an `if` statement. That leap is a `while` loop. Every control-flow construct in every language, at the bottom, is a conditional or unconditional modification of the program counter.
+
+---
+
+## ⚡ The Modern Mirror
+
+*How has this architecture evolved?*
+
+- **LuaJIT:** Mike Pall took the execution model in `lvm.c` and added a just-in-time compiler that translates hot bytecode paths directly into native machine code at runtime. LuaJIT was so fast that in the early 2010s it was routinely benchmarked alongside compiled C++ — a fact that still unsettles people when they hear it for the first time.
+
+- **WebAssembly:** The Wasm specification's instruction set and execution model are spiritually identical to `lvm.c` — a register-like design, a linear instruction stream, and a clean separation between the bytecode format and the host that executes it. Wasm is `lvm.c`'s architectural philosophy applied to the browser.
+
+- **eBPF:** The Linux kernel's embedded VM for safe, sandboxed programs running inside the kernel itself. The verification step that eBPF adds before execution — proving that a program cannot crash or loop forever — is the modern answer to the question `lvm.c` leaves open: *what if the bytecode is malicious?*
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+Mastery is proven by doing. Complete these in order.
+
+**1. The Print Trace**
+Insert a `printf` at the top of the `vmdispatch` loop that prints the name of every OpCode as it executes. Run a ten-line Lua script and read the output. The hidden choreography of a "simple" program — the dozens of `OP_GETTABUP`, `OP_CALL`, and `OP_RETURN` instructions behind a single `print("hello")` — will permanently change how you read high-level code.
+
+**2. The Custom OpCode**
+Define a new instruction `OP_SQUARE` in `lopcodes.h` and implement its logic inside the dispatch loop in `lvm.c`: it should square the value in register B and store the result in register A. Write a Lua script that triggers it. Getting this to compile and run correctly means you have understood the full pipeline from instruction definition to execution.
+
+**3. The Benchmarking**
+Write a Lua script that performs 100,000 numeric additions and 100,000 string concatenations. Time both. Then read the `OP_ADD` and `luaV_concat` implementations side by side. The performance gap you measure will be fully explained by the code — one is three lines, the other triggers memory allocation and garbage collection. The benchmark becomes a readout of the source.
+
+---
+
+## 📖 Recommended Reading
+
+- [The Implementation of Lua 5.0 — Ierusalimschy, Figueiredo, Celes](https://www.lua.org/doc/jucs05.pdf) — The academic paper written by Lua's own authors explaining every architectural decision in `lvm.c`. Read this before the source.
+- [*Crafting Interpreters* — Robert Nystrom](https://craftinginterpreters.com/) — The definitive modern guide to building a bytecode VM from scratch, free online. The book's clox VM is the clearest pedagogical path to understanding `lvm.c`.
+- [A No-Frills Introduction to Lua 5.1 VM Instructions](http://luaforge.net/docman/83/98/ANoFrillsIntroToLua51VMInstructions.pdf) — A field guide to Lua's OpCode set. Keep it open beside the source.
+
+---
+
+*Filed under: `02_Architectures / Virtual_Machines` · Lineage: Lua → LuaJIT → WebAssembly · eBPF*

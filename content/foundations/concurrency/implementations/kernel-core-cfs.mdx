@@ -1,0 +1,155 @@
+---
+title: "Kernel core CFS decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# The Decoder: `core.c` — Segment 3 of 4
+## Segment 3: The Completely Fair Scheduler (CFS)
+
+> **Focus:** The `sched_class` hierarchy, `vruntime`, and the Red-Black Tree  
+> **Core Truth:** Fairness does *not* mean equal time slices. It means proportional CPU allocation based on priority, tracked using a virtual clock.
+
+---
+
+## Deep Root Context: Object-Oriented C
+
+Before 2007, Linux scheduling logic was an unstructured wall of `if/else` statements. Then **Ingo Molnar** introduced **Scheduler Classes**, transforming the design into something elegant and modular.
+
+Inside `core.c`, the `sched_class` struct behaves like:
+- a **Java interface**, or  
+- a **C++ virtual base class**
+
+`core.c` itself does not decide *which* task runs. Instead, it iterates through a hierarchy and asks:
+
+> *"Do you have a task for me?"*
+
+### Scheduling Class Hierarchy
+
+1. **Stop / Deadline / Real-Time**
+   - Highest priority
+   - Used for audio processing, interrupts, and critical tasks  
+
+2. **Fair (`fair.c`)**
+   - The **CFS**
+   - Handles ~99% of user-space programs  
+
+3. **Idle**
+   - The fallback
+   - Runs only when no other work exists  
+
+This separation allows `core.c` to remain clean while delegating actual scheduling logic to `fair.c`.
+
+---
+
+## The Literate Map: The Algorithm of Equality
+
+Explore `kernel/sched/fair.c` to see the real implementation of fairness.
+
+| Concept / Function        | Role                     | Deep Insight |
+|--------------------------|--------------------------|-------------|
+| `struct sched_entity`    | The Avatar               | The scheduler operates on *entities*, not tasks. This abstraction allows grouping (e.g., containers) into a single schedulable unit. |
+| `vruntime`               | The Great Equalizer      | A virtual clock tracking CPU time. It progresses slower for high-priority tasks and faster for low-priority ones. |
+| `update_curr()`          | Advancing the Clock      | On each timer tick, updates how much CPU time the current task has consumed. |
+| `pick_next_entity()`     | Red-Black Tree Selector  | Tasks are stored in a balanced tree sorted by `vruntime`. The scheduler picks the **leftmost node** (least runtime). |
+
+---
+
+## Mental Model: The Buffet Analogy
+
+Imagine a buffet with one rule:
+
+> **"The person who has eaten the least gets the next bite."**
+
+- **`vruntime` = calories consumed**
+- Tasks are sorted by calories in a Red-Black tree
+- The lowest value is always chosen next
+
+### Priority via "Nice" Values
+
+- **High priority (VIP):**
+  - Food counts as low-calorie  
+  - Many CPU cycles → small `vruntime` increase  
+
+- **Low priority:**
+  - Food counts as high-calorie  
+  - Few CPU cycles → large `vruntime` increase  
+
+Result: High-priority tasks stay at the front longer.
+
+---
+
+## The Modern Shift: From CFS to EEVDF
+
+Your repository reflects modern kernel evolution.
+
+### The Limitation of CFS
+- Strong in **throughput** (long-term fairness)
+- Weak in **latency** (fast responsiveness)
+
+### The Evolution: EEVDF
+
+In **Linux 6.6 (late 2023)**, **Peter Zijlstra** introduced:
+
+> **EEVDF (Earliest Eligible Virtual Deadline First)**
+
+### Conceptual Shift
+
+- **CFS:** Who has run the least?
+- **EEVDF:** Who *must* run next?
+
+Instead of just tracking past usage, EEVDF predicts urgency via **virtual deadlines**.
+
+Even a 15-year industry-standard algorithm must evolve.
+
+---
+
+## Build & Break Challenge
+
+You can observe `vruntime` behavior directly—no coding required.
+
+### 1. Observe the Scheduler
+
+Run a CPU-heavy background task:
+- Find its PID:
+- Inspect scheduling data:
+
+```bash
+cat /dev/urandom > /dev/null &
+
+ps aux | grep urandom
+
+cat /proc/<PID>/sched
+
+```
+
+Look for:
+
+- `se.vruntime`
+- `se.sum_exec_runtime`
+
+> Watch them increase as CPU time is consumed.
+
+### 2. The "Nice" Experiment
+Run two CPU-heavy tasks with different priorities:
+
+```bash
+yes > /dev/null &
+yes > /dev/null &
+```
+
+Assign Priorities:
+```bash
+renice -20 <PID1>
+renice +19 <PID2>
+```
+
+#### Open `top`:
+
+You’ll observe:
+
+- ~95% CPU usage for high-priority task
+- ~5% CPU usage for low-priority task
+
+> This difference emerges purely from how vruntime progresses.

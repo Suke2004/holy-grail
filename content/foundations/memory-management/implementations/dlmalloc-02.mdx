@@ -1,0 +1,133 @@
+---
+title: "dlmalloc decoder 02"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `malloc.c` — Segment 2 of 4
+## *The Filing Cabinet — Binning*
+
+> **Domain:** Memory Management / Heap Allocation / Systems Programming
+> **Source:** [`Doug Lea's dlmalloc`](https://g.oswego.edu/dl/html/malloc.html)
+> **Segment Focus:** Fastbins, SmallBins, and TreeBins — how freed memory is catalogued for instant retrieval.
+
+> *"If Segment 1 was the anatomy of a single brick, Segment 2 is the warehouse where those bricks are stored — indexed, sorted, and retrievable in microseconds."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*Why does binning exist?*
+
+When you call `free(p)`, the allocator does not simply forget that memory. It categorizes it — files it into a precise location in a structured index — so the next `malloc` call can find an appropriately sized block without searching the heap.
+
+The problem binning solves is fundamental: a heap is a contiguous region of memory that may contain thousands of free chunks of wildly different sizes. Searching that region linearly for a chunk that fits a given request is O(n). For an allocator called millions of times per second, O(n) is catastrophic. Binning reduces the search to a direct array index — O(1), regardless of how many free chunks exist.
+
+> **The Core Truth:** Searching a massive heap is O(n) — slow to the point of uselessness at scale. Searching a specific size-bucket is O(1) — a single array lookup. The entire binning system exists to make the second statement true for every possible allocation size.
+
+Think of a library where returned books are not reshelved by category but simply piled on the floor. Finding a specific book would take hours. `dlmalloc` reshelves every freed chunk immediately, in exactly the right bin, so the next request for that size finds it in one step.
+
+---
+
+## 📜 The "Literate" Map: The Sorting Logic
+
+In the source, search for `mbinptr` and the `bins` array. What you will find is not one data structure but four, each optimised for a different size class and access pattern.
+
+| Bin Type | Size Range | Data Structure | The Design Insight |
+| :--- | :---: | :--- | :--- |
+| **Fastbins** | < 80 bytes | Singly linked list (LIFO) | Speed above all else. Freed chunks are not merged with neighbors immediately — coalescing is deferred so that a `malloc` following a `free` of the same size can return the same block in nanoseconds. Built for short-lived, same-size objects. |
+| **SmallBins** | < 512 bytes | Doubly linked list (FIFO) | Exact-fit allocation. Each bin holds only one specific size. Requesting 32 bytes means checking exactly one bin — no comparison, no iteration. The FIFO ordering minimises fragmentation over time. |
+| **Unsorted Bin** | Any size | Doubly linked list | The waiting room. Chunks that don't belong to a fastbin land here first. On the next allocation pass, they are sorted into their proper SmallBin or TreeBin. Acts as a single-level cache for recently freed memory. |
+| **TreeBins** | ≥ 512 bytes | Bitwise digital trie (by size) | Large chunks vary too widely for per-size bins. The trie sorts by bit pattern from the most significant bit downward, grouping similar sizes into the same tree node. Best-fit search across the entire large-chunk space remains O(log n) — and is often O(1) in practice. |
+
+---
+
+## 🧠 Mental Models: The Size-to-Index Mapping
+
+The question that makes or breaks binning as a strategy is: how does the allocator know which bin to look in without iterating through them?
+
+**The Bit-Shift Index (SmallBins)**
+
+For small chunks, the conversion is a single arithmetic operation:
+
+```c
+bin_index = size >> 3;   /* divide by 8 — the minimum alignment */
+```
+
+A request for 32 bytes produces index 4. A request for 64 bytes produces index 8. No loop, no comparison — a direct jump to the correct doubly linked list. This is constant time in the strictest sense: the number of free chunks in the heap is completely irrelevant to the cost of finding the right bin.
+
+**The Leading-Zero Index (TreeBins)**
+
+For large chunks, sizes vary too widely for a one-to-one mapping. The code uses a hardware CPU instruction:
+
+```c
+bin_index = SIZE_T_BITSIZE - 1 - __builtin_clz(size);
+```
+
+`__builtin_clz` — *Count Leading Zeros* — returns the position of the highest set bit in an integer. On modern hardware this compiles to a single instruction (`BSR` on x86, `CLZ` on ARM). It is the O(1) key to navigating a trie indexed by bit significance. The highest bit of a size tells you its order of magnitude; the trie descends from there.
+
+---
+
+## ⚡ The Modern Mirror: The Bin-Hopping Attack
+
+Segment 2 is where the most sophisticated heap exploitation techniques originate. Understanding the bin structure is a prerequisite for understanding why.
+
+**Use-After-Free**
+
+When a chunk is in a free list, the allocator writes its forward (`fd`) and backward (`bk`) pointers directly into the bytes that were previously your data. This is the same space-stealing technique from Segment 1 — but now it has a security consequence. If your code retains a pointer to freed memory and writes through it, you corrupt those list pointers. The bin's linked list now contains a forged node.
+
+**The Result**
+
+On the next `malloc` call, the allocator follows the corrupted `fd` pointer and returns it as a valid allocation. An attacker who controls the forged pointer controls where `malloc` returns — which can be a stack frame, a function pointer table, or a region of the `.got.plt` section. Arbitrary code execution follows.
+
+**The Modern Defense**
+
+Contemporary allocators address this with **safe unlinking** — before removing a chunk from a free list, the allocator verifies that `chunk->fd->bk == chunk` and `chunk->bk->fd == chunk`. A forged pointer breaks this invariant and the allocator aborts. `glibc` additionally **mangles** free list pointers by XORing them with a secret value derived from their storage address, so a raw overwrite of `fd` or `bk` produces a detectably invalid pointer rather than a usable one.
+
+Both defenses were designed in direct response to attacks that exploit exactly the bin structure described in this segment.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The Speed Test**
+
+Write two benchmarks. The first allocates and frees 100,000 objects of the same size (e.g., 32 bytes) in a loop. The second allocates and frees 100,000 objects of random sizes between 8 and 512 bytes. Time both with `clock_gettime`.
+
+The same-size loop will be measurably faster — often by a factor of 3–5×. The reason is not just binning: the same bin is accessed on every iteration, keeping the bin's list head and the free chunk itself in the L1 cache. The random-size loop scatters accesses across dozens of different bins, evicting the cache on nearly every call. The benchmark is a direct readout of the bin structure's cache behaviour.
+
+**2. The `bin_index` Dissection**
+
+Find the `bin_index(sz)` macro or function in the source. Read the conditional logic that routes small sizes to the shift path and large sizes to the `__builtin_clz` path. Then verify it manually: pick three sizes — one small (48), one boundary (512), one large (2048) — and compute the expected bin index by hand using both formulas. Confirm that the code produces the same result. If it does, you understand the indexing scheme completely. If it doesn't, you have found something worth investigating.
+
+**3. The Pointer Inspection**
+
+Allocate two chunks of the same size. Free both. Then — carefully, in a controlled test program — cast the freed pointer back to a `struct malloc_chunk *` and print the `fd` and `bk` fields. You will be reading the bin's linked list pointers from inside what was recently your data. Observe that the first freed chunk's `fd` points to the bin head, and the second freed chunk's `fd` points to the first. The filing cabinet, made visible.
+
+---
+
+## 📖 Key Symbols to Find in the Source
+
+| Symbol | What It Is |
+|---|---|
+| `mbinptr` | A typed pointer to the head or tail of a bin's doubly linked list |
+| `fd` / `bk` | Forward and backward pointers — stored inside the user data area when a chunk is free |
+| `bin_index(sz)` | The macro that converts a size to a bin array index in O(1) |
+| `__builtin_clz` | GCC intrinsic for Count Leading Zeros — compiles to a single hardware instruction |
+| `NSMALLBINS` | The constant defining how many small bins exist (typically 32) |
+
+---
+
+## 🗺️ Where You Stand
+
+| Segment | Title | Status |
+|---|---|---|
+| **1 of 4** | The Anatomy of a Chunk | ✦ complete |
+| **2 of 4** | The Filing Cabinet | ✦ complete |
+| **3 of 4** | The Allocation Lifecycle | How `malloc` selects, splits, and returns a chunk |
+| **4 of 4** | The Act of Reclamation | How `free` coalesces neighbors and returns pages to the OS |
+
+---
+
+*Filed under: `01_Foundations / Memory_Management` · Part 2 of 4 · Lineage: dlmalloc → ptmalloc2 (glibc) → jemalloc → tcmalloc*

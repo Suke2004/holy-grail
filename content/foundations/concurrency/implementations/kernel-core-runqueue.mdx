@@ -1,0 +1,111 @@
+---
+title: "Kernel core Runqueue decoder"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# The Decoder: `core.c` — Segment 1 of 6  
+## *The Runqueue: The Waiting Room of the CPU*
+
+> **Domain:** Operating Systems / Scheduling / Systems Programming  
+> **Source:** `kernel/sched/core.c` (Linux Kernel)  
+> **Segment Focus:** `struct rq` — the per-CPU runqueue, the foundation of modern scheduling.
+
+> *"A CPU does not choose what to run randomly. Every nanosecond is a calculated decision."*
+
+---
+
+## The "Deep Root" Context
+
+### Why "Per-CPU" Runqueues Exist
+
+In early Linux systems, scheduling was simple—but inefficient. There was a **single global task list**:
+
+- A CPU would lock the list  
+- Select a task  
+- Unlock the list  
+
+On modern multi-core systems (e.g., 64 cores), this design collapses:
+
+- 1 CPU works  
+- 63 CPUs wait for the lock  
+
+This creates massive contention.
+
+### The Breakthrough
+
+Each CPU gets its own **private runqueue**:
+
+- No shared bottleneck  
+- Independent scheduling decisions  
+- Massive scalability improvement  
+
+This structure is called:
+
+> **Runqueue (`struct rq`) — one per CPU core**
+
+---
+
+## The "Literate" Map: `struct rq`
+
+Search for `struct rq` in `core.c`. It represents the **entire scheduling state of a single CPU**.
+
+| Field | What It Actually Does | The Deeper Insight |
+| :--- | :--- | :--- |
+| `lock` | **The Gatekeeper** | Even "private" queues need protection. Idle CPUs may attempt **task stealing** (load balancing), so this spinlock ensures consistency. |
+| `nr_running` | **The Pressure Gauge** | Tracks how many tasks are ready to run. A high value indicates CPU overload. |
+| `cfs` / `rt` / `dl` | **The Multi-Class System** | Linux uses multiple scheduling strategies: <br>• **CFS** (Completely Fair Scheduler) <br>• **RT** (Real-Time) <br>• **DL** (Deadline-based) |
+| `curr` | **The King** | Pointer to the currently executing task on the CPU. |
+| `clock` | **The Scheduler’s Pulse** | Tracks CPU time in nanoseconds—not wall time—to measure task execution precisely. |
+
+---
+
+## Mental Model: The "Gym Membership"
+
+Think of the CPU as a gym:
+
+- Each **core** → a treadmill  
+- Each **runqueue** → a line of people waiting  
+
+### How it works:
+
+1. Every treadmill has its own queue (**Runqueue**)  
+2. If one queue is empty, the trainer reassigns people (**Load Balancing**)  
+3. Only one person runs at a time (**`curr` task**)  
+
+> Only the task on the treadmill gets "exercise" (CPU cycles).
+
+---
+
+## The Modern Mirror: Cache Locality
+
+Why does Linux try to keep tasks on the **same CPU**?
+
+### The Reason: CPU Cache
+
+- CPUs have **L1/L2 caches** (extremely fast memory)  
+- When a task runs, its data is loaded into cache  
+
+### The Problem
+
+If a task moves from CPU 0 → CPU 5:
+
+- Cache becomes **cold**  
+- Data must be reloaded from RAM  
+- Performance drops temporarily  
+
+### The Insight
+
+> Scheduling is not just about fairness—it’s about **data locality and speed**.
+
+---
+
+## The "Build & Break" Challenges
+
+### 1. The Core Count
+
+Run:
+
+```bash
+lscpu

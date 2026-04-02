@@ -1,0 +1,125 @@
+---
+title: "dlmalloc decoder 01"
+difficulty: "Intermediate"
+tags: []
+prerequisites: []
+---
+
+# 🏺 The Decoder: `malloc.c` — Segment 1 of 4
+## *The Anatomy of a Chunk*
+
+> **Domain:** Memory Management / Heap Allocation / Systems Programming
+> **Source:** [`Doug Lea's dlmalloc`](https://g.oswego.edu/dl/html/malloc.html)
+> **Segment Focus:** The `malloc_chunk` struct — the atom of the heap, and the "overhead" of existence.
+
+> *"To the computer, there is no such thing as 'free' space. There is only unoccupied space that must be meticulously cataloged."*
+
+---
+
+## 🔍 The "Deep Root" Context
+
+*Why does this struct exist?*
+
+When you call `malloc(100)`, you do not receive exactly 100 bytes. You receive 100 bytes of usable space **plus a hidden header** that the allocator silently prepended. That header is the only thing standing between an ordered heap and an unrecoverable collision of memory blocks.
+
+The central engineering challenge Doug Lea solved in `malloc.c` is this: how do you store the metadata required to manage thousands of live allocations, without wasting so much memory on the metadata itself that you defeat the purpose of having an allocator? The answer is `struct malloc_chunk` — a structure so carefully designed that its overhead is often **zero additional bytes**, because it steals space from the blocks around it.
+
+This segment is the **physical layer**. Before you can understand how memory moves (allocation and freeing), you must understand how it is shaped.
+
+---
+
+## 📜 The "Literate" Map: `struct malloc_chunk`
+
+Find `struct malloc_chunk` in the source. It is the atom from which the entire heap is built. Every allocated region, every free region, and every boundary between them is an instance of this struct.
+
+| Field | What It Actually Does | The Performance Insight |
+| :--- | :--- | :--- |
+| `prev_foot` | **The Ghost of the Past.** Stores the size of the *previous* chunk in memory — but only when that previous chunk is free. | When the previous chunk is in use, this field's space is consumed by that chunk's data. The same bytes serve two owners depending on state. This is space-stealing at the allocator level. |
+| `head` | **Size and Status in one integer.** Stores the size of the current chunk. | Because all chunks are 8-byte aligned, the lowest 3 bits of the size are always zero in normal arithmetic. Lea hijacks them as status flags — no extra bytes required. |
+| `PREV_INUSE` (bit 0 of `head`) | **The Neighbor Check.** If this bit is `1`, the physically adjacent previous chunk is currently allocated. If `0`, it is free and available to merge. | `free()` can determine the previous chunk's status with a single bitwise AND — no pointer chasing, no list searching. Coalescing is O(1). |
+| `IS_MMAPPED` (bit 1 of `head`) | **The Origin Story.** Distinguishes chunks that came from the heap via `sbrk` from large blocks sourced directly from the OS via `mmap`. | These two origins require entirely different release strategies. One bit encodes which path to take when freeing, without storing a separate pointer. |
+
+---
+
+## 🧠 Mental Models: The Invisible Header
+
+Think of the heap as a train of cars parked end to end on a single track. Each car knows exactly how long it is, and each car carries a small handle on its rear face that belongs, mechanically, to the car behind it. No space is wasted. No boundary is unmarked.
+
+**The Offset Trick**
+
+When `malloc` returns a pointer to your code, it does not point to the `head` field. It points to `head + 8` (or `head + 16` on a 64-bit system). The metadata sits silently *behind* the pointer you hold. You never see it. The allocator always knows exactly where to find it by subtracting the header size from your pointer.
+
+```
+Your pointer
+     │
+     ▼
+[ prev_foot | head | ← your 100 bytes → ]
+ ↑
+ The chunk starts here, 8–16 bytes before what malloc returned
+```
+
+**The Minimum Size Constraint**
+
+Even `malloc(1)` will return a chunk of at least 16 or 32 bytes. This is not waste — it is a structural requirement. When a chunk is eventually freed, the allocator must store two pointers inside it: a forward and backward link into a free list. If the chunk were smaller than those two pointers, the free list could not be written into it without overwriting adjacent memory. The minimum chunk size is therefore `sizeof(void*) × 2`, aligned upward.
+
+---
+
+## ⚡ The Modern Mirror: Heap Overflows
+
+Understanding `malloc_chunk` is foundational to understanding one of the most exploited vulnerability classes in systems security.
+
+**The Vulnerability**
+
+If a programmer writes 105 bytes into a 100-byte allocation, those extra 5 bytes land directly on top of the `head` field of the *next* chunk. The allocator has no way to know the corruption occurred — the header looks like a valid header because it is in the right location.
+
+**The Result**
+
+The next time `free()` is called on that next chunk, the allocator reads the corrupted `head` field. It extracts a fabricated size, follows fabricated flags, and begins unlinking the chunk from a free list using the forged pointers. An attacker who controls those bytes controls where the unlink operation writes — an arbitrary write primitive in the process's address space. This is the classical **heap overflow exploit**.
+
+**The Modern Defense**
+
+Contemporary `malloc` implementations harden chunk headers with XOR-based integrity checks (sometimes called safe unlinking) and randomized heap canaries. The `head` field is now validated before it is trusted. But the vulnerability class was only possible because of the tight coupling between the chunk header and adjacent memory that `malloc_chunk` establishes — which you now understand from first principles.
+
+---
+
+## 🛠️ The "Build & Break" Challenges
+
+**1. The Pointer Math**
+
+Compile and run the following:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(void) {
+    void *p = malloc(100);
+    size_t *header = (size_t *)((char *)p - sizeof(size_t));
+    printf("Raw header value : %zu\n", *header);
+    printf("Chunk size       : %zu\n", *header & ~7UL);  /* mask the 3 flag bits */
+    free(p);
+    return 0;
+}
+```
+
+The reported chunk size will likely be **112 bytes**, not 100. Account for each byte: 100 requested, rounded up to the next 8-byte boundary (104), plus the header itself. Verify your arithmetic against the output. If they agree, you understand alignment. If they do not, you have something more interesting to investigate.
+
+**2. The Bit-Check**
+
+Allocate two blocks back to back. Read the `PREV_INUSE` bit (bit 0 of `head`) from the *second* block's header — it should be set, because the first block is in use. Free the first block, then re-read the bit from the second block's header. It should now be cleared. One bit. Zero list traversal. The entire state of a neighboring block encoded in a single flag.
+
+---
+
+## 🗺️ What Comes Next
+
+This segment is the **physical layer** — the shape of memory at rest. The three segments that follow build on this foundation:
+
+| Segment | Title | The Question It Answers |
+|---|---|---|
+| **2 of 4** | The Filing Cabinet | How free chunks are sorted into bins for O(1) retrieval |
+| **3 of 4** | The Act of Allocation | How `malloc` selects and splits a chunk on every call |
+| **4 of 4** | The Act of Reclamation | How `free` coalesces neighbors and returns memory to the OS |
+
+---
+
+*Filed under: `01_Foundations / Memory_Management` · Part 1 of 4 · Lineage: dlmalloc → ptmalloc2 (glibc) → jemalloc → tcmalloc*
