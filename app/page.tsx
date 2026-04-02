@@ -43,8 +43,8 @@ export default function Home() {
   return (
     <div className="flex flex-col min-h-screen">
       {/* Hero Section */}
-      <section className="px-8 pt-32 pb-20 border-b border-sidebar-border relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-foreground/5 blur-[120px] rounded-full -mr-64 -mt-64" />
+      <section className="px-6 md:px-8 pt-20 md:pt-32 pb-12 md:pb-20 border-b border-sidebar-border relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-[300px] md:w-[500px] h-[300px] md:h-[500px] bg-foreground/5 blur-[80px] md:blur-[120px] rounded-full -mr-32 -mt-32 md:-mr-64 md:-mt-64" />
         
         <div className="max-w-5xl mx-auto relative z-10">
           <motion.div
@@ -52,16 +52,16 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-foreground/5 border border-sidebar-border text-[10px] font-mono text-zinc-500 mb-8 uppercase tracking-widest">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-foreground/5 border border-sidebar-border text-[9px] md:text-[10px] font-mono text-foreground/50 mb-6 md:mb-8 uppercase tracking-widest leading-none">
               <Zap className="w-3 h-3 text-primary" />
               <span>Vault Protocol v2.4 Active</span>
             </div>
             
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-8 text-foreground uppercase">
+            <h1 className="text-4xl md:text-7xl font-bold tracking-tighter mb-6 md:mb-8 text-foreground uppercase leading-tight md:leading-none">
               The Holy Grail<span className="text-primary opacity-30">_</span>
             </h1>
             
-            <p className="max-w-2xl text-lg text-foreground/60 leading-relaxed font-mono">
+            <p className="max-w-2xl text-base md:text-lg text-foreground/60 leading-relaxed font-mono">
               The master knowledge base for software engineering excellence. 
               high-performance architectures, domain expertise, and foundational systems.
             </p>

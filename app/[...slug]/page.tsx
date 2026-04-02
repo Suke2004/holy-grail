@@ -21,8 +21,11 @@ export default async function ContentPage({ params }: { params: Promise<{ slug: 
   return (
     <div className="flex flex-col w-full min-h-screen">
       {/* Breadcrumbs */}
-      <nav className="px-8 py-4 border-b border-sidebar-border bg-sidebar/50 flex items-center gap-2 text-[11px] font-mono text-zinc-500 overflow-x-auto no-scrollbar backdrop-blur-sm sticky top-0 z-20">
-        <Link href="/" className="hover:text-primary transition-colors flex items-center gap-1">
+      <nav className="px-4 sm:px-8 py-4 border-b border-sidebar-border bg-sidebar/50 flex items-center gap-2 text-[11px] font-mono text-zinc-500 overflow-x-auto no-scrollbar backdrop-blur-sm sticky top-0 lg:top-0 z-20 transition-all duration-300
+        [html:not(.lg)]
+        lg:translate-y-0 translate-y-0
+      ">
+        <Link href="/" className="hover:text-primary transition-colors flex items-center gap-1 shrink-0">
           <Home className="w-3 h-3" />
           <span>ROOT</span>
         </Link>
@@ -30,7 +33,7 @@ export default async function ContentPage({ params }: { params: Promise<{ slug: 
           <React.Fragment key={i}>
             <ChevronRight className="w-3 h-3 flex-shrink-0" />
             <span className={cn(
-              "uppercase tracking-wider",
+              "uppercase tracking-wider whitespace-nowrap",
               i === slugArray.length - 1 ? "text-primary font-bold" : ""
             )}>
               {part.replace(/-/g, ' ')}
@@ -39,9 +42,9 @@ export default async function ContentPage({ params }: { params: Promise<{ slug: 
         ))}
       </nav>
 
-      <div className="flex justify-center w-full py-16 px-4 sm:px-8 lg:px-12 relative">
+      <div className="flex justify-center w-full py-10 md:py-16 px-4 sm:px-8 lg:px-12 relative">
         <article className="prose prose-zinc dark:prose-invert max-w-3xl w-full mx-auto font-mono
-          prose-headings:font-bold prose-headings:tracking-tighter prose-h1:text-4xl prose-h1:mb-8 prose-h1:uppercase
+          prose-headings:font-bold prose-headings:tracking-tighter prose-h1:text-3xl md:text-4xl prose-h1:mb-8 prose-h1:uppercase
           prose-p:text-zinc-500 dark:prose-p:text-zinc-400 prose-p:leading-relaxed prose-p:text-[14px]
           prose-code:text-primary prose-code:bg-primary/5 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
           prose-a:text-primary prose-a:font-bold prose-a:no-underline prose-a:border-b-2 prose-a:border-primary/20 hover:prose-a:border-primary transition-all

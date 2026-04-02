@@ -1,16 +1,14 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BookOpen, Box, Database, Cpu, Layers, GitMerge, ChevronRight, Terminal } from 'lucide-react';
+import { BookOpen, Box, Database, Layers, GitMerge, ChevronRight, Terminal } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 import { ThemeToggle } from './ThemeToggle';
-import { useState, useEffect } from 'react';
-import { AnimatePresence } from 'framer-motion';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -30,7 +28,6 @@ function FolderItem({ item, depth, pathname, renderItems }: {
 }) {
   const [isOpen, setIsOpen] = useState(false);
   
-  // Auto-expand if a child is active
   useEffect(() => {
     const hasActiveChild = (items: SidebarItem[]): boolean => {
       return items. some(i => i.href === pathname || (i.items && hasActiveChild(i.items)));
@@ -56,7 +53,7 @@ function FolderItem({ item, depth, pathname, renderItems }: {
       <button 
         onClick={toggle}
         className={cn(
-          "w-full flex items-center justify-between gap-2 text-foreground/50 font-bold text-[10px] uppercase tracking-[0.2em] py-2 px-1 font-mono hover:text-primary transition-colors group",
+          "w-full flex items-center justify-between gap-2 text-foreground/50 font-bold text-[10px] uppercase tracking-[0.2em] py-2 px-1 font-mono hover:text-primary transition-colors group text-left",
           depth === 0 ? "mt-6" : "mt-1"
         )}
       >
@@ -93,7 +90,7 @@ function FolderItem({ item, depth, pathname, renderItems }: {
   );
 }
 
-export function Sidebar({ items }: { items: SidebarItem[] }) {
+export function SidebarContent({ items }: { items: SidebarItem[] }) {
   const pathname = usePathname();
 
   function renderItems(list: SidebarItem[], depth = 0) {
@@ -141,16 +138,18 @@ export function Sidebar({ items }: { items: SidebarItem[] }) {
   }
 
   return (
-    <aside className="w-[280px] bg-sidebar border-r border-sidebar-border p-6 flex-shrink-0 h-full overflow-y-auto hidden lg:flex flex-col justify-between custom-scrollbar shadow-2xl transition-colors duration-300">
-      <div className="flex flex-col">
-        <Link href="/" className="flex items-center gap-2 font-bold text-lg mb-10 text-foreground tracking-tighter px-1 group">
+    <div className="flex flex-col h-full bg-sidebar">
+      <div className="flex flex-col flex-1">
+        <Link href="/" className="flex items-center gap-2 font-bold text-lg mb-10 text-foreground tracking-tighter px- group">
           <div className="p-1.5 rounded-lg bg-primary/10 border border-primary/20 group-hover:bg-primary/20 transition-colors">
             <BookOpen className="w-5 h-5 text-primary" />
           </div>
-          <span className="font-mono tracking-widest">Holy<span className="text-primary opacity-50">_</span>Grail</span>
-          <span className="text-primary opacity-50">Files</span>
+          <div className="flex flex-col leading-none">
+            <span className="font-mono tracking-widest text-[14px]">Holy<span className="text-primary opacity-50">_</span>Grail</span>
+            <span className="text-[10px] text-primary/50 uppercase tracking-[0.3em] font-bold mt-1">Files</span>
+          </div>
         </Link>
-        <nav>
+        <nav className="flex-1 overflow-y-auto custom-scrollbar pr-2">
           {renderItems(items)}
         </nav>
       </div>
@@ -162,6 +161,14 @@ export function Sidebar({ items }: { items: SidebarItem[] }) {
           <span>© 2026</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function Sidebar({ items }: { items: SidebarItem[] }) {
+  return (
+    <aside className="w-[280px] bg-sidebar border-r border-sidebar-border p-6 flex-shrink-0 h-full hidden lg:flex flex-col sticky top-0 transition-colors duration-300">
+      <SidebarContent items={items} />
     </aside>
   );
 }
