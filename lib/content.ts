@@ -33,6 +33,12 @@ export async function getMdxContent(slugPath: string) {
       // If it's a code file, wrap it in a code block
       if (CODE_EXTS.includes(ext)) {
         const lang = ext.substring(1);
+        // Escape special MDX characters to prevent parsing errors
+        const escapedContents = fileContents
+          .replace(/{/g, '&#123;')
+          .replace(/}/g, '&#125;')
+          .replace(/</g, '&lt;');
+
         return { 
           frontmatter: { 
             title: path.basename(slugPath).replace(/-/g, ' '),
@@ -41,7 +47,7 @@ export async function getMdxContent(slugPath: string) {
             isRawCode: true,
             extension: ext
           }, 
-          content: `\`\`\`${lang}\n${fileContents}\n\`\`\`` 
+          content: `\`\`\`${lang}\n${escapedContents}\n\`\`\`` 
         };
       }
       

@@ -55,7 +55,7 @@ Search for `struct rq` in `core.c`. It represents the **entire scheduling state 
 | :--- | :--- | :--- |
 | `lock` | **The Gatekeeper** | Even "private" queues need protection. Idle CPUs may attempt **task stealing** (load balancing), so this spinlock ensures consistency. |
 | `nr_running` | **The Pressure Gauge** | Tracks how many tasks are ready to run. A high value indicates CPU overload. |
-| `cfs` / `rt` / `dl` | **The Multi-Class System** | Linux uses multiple scheduling strategies: <br>• **CFS** (Completely Fair Scheduler) <br>• **RT** (Real-Time) <br>• **DL** (Deadline-based) |
+| `cfs` / `rt` / `dl` | **The Multi-Class System** | Linux uses multiple scheduling strategies: <br />• **CFS** (Completely Fair Scheduler) <br />• **RT** (Real-Time) <br />• **DL** (Deadline-based) |
 | `curr` | **The King** | Pointer to the currently executing task on the CPU. |
 | `clock` | **The Scheduler’s Pulse** | Tracks CPU time in nanoseconds—not wall time—to measure task execution precisely. |
 
