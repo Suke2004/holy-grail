@@ -2,16 +2,20 @@ import { createHighlighter } from 'shiki';
 
 let highlighter: any = null;
 
-export async function highlight(code: string, lang: string, theme: string = 'vitesse-dark') {
+export async function highlight(code: string, lang: string) {
   if (!highlighter) {
     highlighter = await createHighlighter({
-      themes: ['github-dark', 'github-light', 'vitesse-dark', 'vitesse-light'],
+      themes: ['vitesse-dark', 'vitesse-light'],
       langs: ['c', 'cpp', 'py', 'js', 'ts', 'tsx', 'jsx', 'go', 'rs', 'java', 'lua', 'bash', 'json', 'yaml', 'md', 'mdx', 'html', 'css'],
     });
   }
 
+  // Generate dual-theme code
   return highlighter.codeToHtml(code, {
     lang,
-    theme,
+    themes: {
+      light: 'vitesse-light',
+      dark: 'vitesse-dark',
+    }
   });
 }

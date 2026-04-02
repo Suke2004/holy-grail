@@ -16,22 +16,22 @@ export async function CodeBlock({ code, lang = 'text', filename, showLineNumbers
   // Shiki doesn't easily support dynamic CSS variables in a single call, so we'll 
   // provide a neutral theme (vitesse-dark) that looks great in both or matches dark mode.
   
-  const highlightedHtml = await highlight(code, lang, 'vitesse-dark');
+  const highlightedHtml = await highlight(code, lang);
 
   const Icon = lang === 'bash' ? Terminal : lang === 'html' ? Globe : FileCode;
 
   return (
-    <div className="my-8 rounded-lg overflow-hidden border border-zinc-800 bg-[#0d0d0d] shadow-2xl group/code font-mono">
+    <div className="my-8 rounded-lg overflow-hidden border border-sidebar-border bg-sidebar shadow-2xl group/code font-mono transition-colors duration-300">
       {/* VS Code Tab Style Header */}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-[#1a1a1a] border-b border-zinc-800 text-[11px]">
+      <div className="flex items-center justify-between px-4 py-1.5 bg-sidebar-bg/50 border-b border-sidebar-border text-[11px] backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 bg-[#1e1e1e] px-3 py-1.5 border-t-2 border-primary -mb-1.5 rounded-t-sm text-zinc-300">
+          <div className="flex items-center gap-1.5 bg-background px-3 py-1.5 border-t-2 border-primary -mb-1.5 rounded-t-sm text-foreground/80">
             <Icon className="w-3.5 h-3.5 text-primary opacity-80" />
             <span className="truncate max-w-[200px] uppercase tracking-wider font-bold">
               {filename || `buffer.${lang}`}
             </span>
           </div>
-          <div className="hidden sm:block text-zinc-600 font-mono tracking-tighter opacity-50">
+          <div className="hidden sm:block text-zinc-500 font-mono tracking-tighter opacity-50">
             {lang.toUpperCase()}
           </div>
         </div>
@@ -41,7 +41,7 @@ export async function CodeBlock({ code, lang = 'text', filename, showLineNumbers
       </div>
 
       {/* Code Area with Line Numbers */}
-      <div className="relative group overflow-x-auto selection:bg-primary/20">
+      <div className="relative group overflow-x-auto selection:bg-primary/20 bg-background/50">
         <div 
           className="shiki-wrapper text-[13px] leading-6 py-4"
           dangerouslySetInnerHTML={{ __html: highlightedHtml }}
@@ -64,15 +64,29 @@ export async function CodeBlock({ code, lang = 'text', filename, showLineNumbers
             width: 1.5rem;
             margin-right: 1.5rem;
             text-align: right;
-            color: #404040;
+            color: #888888;
+            opacity: 0.3;
             user-select: none;
             font-size: 11px;
+          }
+
+          /* Shiki Dual Theme Logic */
+          html:not(.dark) .shiki,
+          html:not(.dark) .shiki span {
+            color: var(--shiki-light) !important;
+            background-color: var(--shiki-light-bg) !important;
+          }
+
+          html.dark .shiki,
+          html.dark .shiki span {
+            color: var(--shiki-dark) !important;
+            background-color: var(--shiki-dark-bg) !important;
           }
         `}} />
       </div>
 
-      {/* Terminal-like Status Bar (Optional) */}
-      <div className="px-4 py-1.5 bg-[#111111] border-t border-zinc-900/50 flex justify-between items-center text-[10px] text-zinc-500 font-bold tracking-widest">
+      {/* Terminal-like Status Bar */}
+      <div className="px-4 py-1.5 bg-sidebar-bg/30 border-t border-sidebar-border flex justify-between items-center text-[10px] text-zinc-500 font-bold tracking-widest opacity-80">
         <div className="flex gap-4">
           <span>{code.split('\n').length} LINES</span>
           <span>{new Blob([code]).size} B</span>
