@@ -25,11 +25,27 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={`${spaceMono.variable} h-full antialiased dark`}
+      className={`${spaceMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="h-full flex bg-[#09090b] text-zinc-100 selection:bg-blue-500/30 font-mono">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                  document.documentElement.classList.add('dark')
+                } else {
+                  document.documentElement.classList.remove('dark')
+                }
+              } catch (_) {}
+            `,
+          }}
+        />
+      </head>
+      <body className="h-full flex bg-background text-foreground selection:bg-primary/30 font-mono transition-colors duration-300">
         <Sidebar items={sidebarItems} />
-        <main className="flex-1 h-full overflow-y-auto bg-[#09090b] shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.5)]">
+        <main className="flex-1 h-full overflow-y-auto bg-background relative">
           {children}
         </main>
       </body>
