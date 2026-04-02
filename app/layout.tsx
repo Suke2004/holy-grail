@@ -11,7 +11,7 @@ const spaceMono = Space_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Algorithmica - Next.js Knowledge Base",
+  title: "Holy Grain files",
   description: "Next-generation software architecture patterns",
 };
 

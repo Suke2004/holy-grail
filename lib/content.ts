@@ -47,7 +47,7 @@ export async function getMdxContent(slugPath: string) {
             isRawCode: true,
             extension: ext
           }, 
-          content: `\`\`\`${lang}\n${escapedContents}\n\`\`\`` 
+          content: `\`\`\`${lang}:${path.basename(slugPath)}${ext}\n${escapedContents}\n\`\`\`` 
         };
       }
       

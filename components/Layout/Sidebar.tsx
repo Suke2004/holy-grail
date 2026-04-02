@@ -147,7 +147,8 @@ export function Sidebar({ items }: { items: SidebarItem[] }) {
           <div className="p-1.5 rounded-lg bg-primary/10 border border-primary/20 group-hover:bg-primary/20 transition-colors">
             <BookOpen className="w-5 h-5 text-primary" />
           </div>
-          <span className="font-mono tracking-widest">ALGO<span className="text-primary opacity-50">_</span>RITHMICA</span>
+          <span className="font-mono tracking-widest">Holy<span className="text-primary opacity-50">_</span>Grail</span>
+          <span className="text-primary opacity-50">Files</span>
         </Link>
         <nav>
           {renderItems(items)}
