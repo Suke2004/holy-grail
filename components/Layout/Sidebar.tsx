@@ -56,13 +56,13 @@ function FolderItem({ item, depth, pathname, renderItems }: {
       <button 
         onClick={toggle}
         className={cn(
-          "w-full flex items-center justify-between gap-2 text-zinc-400 font-bold text-[10px] uppercase tracking-[0.2em] py-2 px-1 font-mono hover:text-zinc-200 transition-colors group",
+          "w-full flex items-center justify-between gap-2 text-foreground/50 font-bold text-[10px] uppercase tracking-[0.2em] py-2 px-1 font-mono hover:text-primary transition-colors group",
           depth === 0 ? "mt-6" : "mt-1"
         )}
       >
         <div className="flex items-center gap-2">
           {depth === 0 && (
-            <div className="p-1 rounded bg-white/5 border border-sidebar-border group-hover:border-blue-500/50 transition-colors">
+            <div className="p-1 rounded bg-foreground/5 border border-sidebar-border group-hover:border-primary transition-colors">
               {getIcon(item.title)}
             </div>
           )}
@@ -122,13 +122,13 @@ export function Sidebar({ items }: { items: SidebarItem[] }) {
                   "group flex items-center gap-2 text-[12px] py-1.5 px-3 rounded-md transition-all duration-200 font-mono",
                   isActive 
                     ? "text-primary font-bold bg-primary/10 shadow-sm border border-primary/20" 
-                    : "text-zinc-500 hover:text-zinc-200 hover:bg-white/5"
+                    : "text-foreground/50 hover:text-primary hover:bg-foreground/5"
                 )}
               >
                 {isActive && (
                   <motion.div 
                     layoutId="active-indicator"
-                    className="w-1 h-1 bg-primary rounded-full shadow-[0_0_8px_rgba(255,255,255,0.5)]"
+                    className="w-1 h-1 bg-primary rounded-full"
                   />
                 )}
                 <span className="truncate">{item.title}</span>
@@ -157,7 +157,7 @@ export function Sidebar({ items }: { items: SidebarItem[] }) {
 
       <div className="mt-auto pt-8">
         <ThemeToggle />
-        <div className="px-2 py-4 border-t border-sidebar-border mt-4 flex items-center gap-4 text-[10px] font-mono text-zinc-500 uppercase tracking-widest opacity-40">
+        <div className="px-2 py-4 border-t border-sidebar-border mt-4 flex items-center gap-4 text-[10px] font-mono text-foreground/40 uppercase tracking-widest">
           <span>VAULT_PROTO_2.4</span>
           <span>© 2026</span>
         </div>

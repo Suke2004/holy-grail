@@ -21,17 +21,17 @@ export async function CodeBlock({ code, lang = 'text', filename, showLineNumbers
   const Icon = lang === 'bash' ? Terminal : lang === 'html' ? Globe : FileCode;
 
   return (
-    <div className="my-8 rounded-lg overflow-hidden border border-sidebar-border bg-sidebar shadow-2xl group/code font-mono transition-colors duration-300">
+    <div className="my-8 rounded-xl overflow-hidden border border-sidebar-border bg-sidebar shadow-2xl group/code font-mono transition-all duration-300 max-w-full">
       {/* VS Code Tab Style Header */}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-sidebar-bg/50 border-b border-sidebar-border text-[11px] backdrop-blur-md">
+      <div className="flex items-center justify-between px-4 py-2 bg-sidebar-bg/80 border-b border-sidebar-border text-[11px] backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 bg-background px-3 py-1.5 border-t-2 border-primary -mb-1.5 rounded-t-sm text-foreground/80">
-            <Icon className="w-3.5 h-3.5 text-primary opacity-80" />
-            <span className="truncate max-w-[200px] uppercase tracking-wider font-bold">
+          <div className="flex items-center gap-2 bg-background px-4 py-2 border-t-2 border-primary -mb-2 rounded-t-md text-foreground font-bold shadow-sm">
+            <Icon className="w-3.5 h-3.5 text-primary" />
+            <span className="truncate max-w-[160px] sm:max-w-[300px] uppercase tracking-widest text-[10px]">
               {filename || `buffer.${lang}`}
             </span>
           </div>
-          <div className="hidden sm:block text-zinc-500 font-mono tracking-tighter opacity-50">
+          <div className="hidden md:block text-zinc-500 font-bold opacity-30 text-[9px] tracking-[0.2em]">
             {lang.toUpperCase()}
           </div>
         </div>
@@ -40,60 +40,70 @@ export async function CodeBlock({ code, lang = 'text', filename, showLineNumbers
         </div>
       </div>
 
-      {/* Code Area with Line Numbers */}
-      <div className="relative group overflow-x-auto selection:bg-primary/20 bg-background/50">
-        <div 
-          className="shiki-wrapper text-[13px] leading-6 py-4"
-          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-        />
+      {/* Code Area with Line Numbers & Overflow Control */}
+      <div className="relative group overflow-hidden bg-background/40">
+        <div className="overflow-x-auto custom-scrollbar max-w-full">
+          <div 
+            className="shiki-wrapper text-[13px] leading-6 py-6 min-w-full w-fit"
+            dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+          />
+        </div>
         
         <style dangerouslySetInnerHTML={{ __html: `
           .shiki-wrapper pre {
             background-color: transparent !important;
             margin: 0 !important;
-            padding: 0 1.5rem !important;
+            padding: 0 2rem !important;
+            width: fit-content;
+            min-width: 100%;
           }
           .shiki-wrapper code {
             counter-reset: line;
             display: grid;
+            width: fit-content;
+            min-width: 100%;
+          }
+          .shiki-wrapper .line {
+            display: flex;
+            width: 100%;
           }
           .shiki-wrapper .line::before {
             counter-increment: line;
             content: counter(line);
             display: inline-block;
-            width: 1.5rem;
+            width: 2rem;
             margin-right: 1.5rem;
             text-align: right;
-            color: #888888;
-            opacity: 0.3;
+            color: var(--foreground);
+            opacity: 0.15;
             user-select: none;
-            font-size: 11px;
+            font-size: 10px;
+            flex-shrink: 0;
           }
 
-          /* Shiki Dual Theme Logic */
-          html:not(.dark) .shiki,
-          html:not(.dark) .shiki span {
-            color: var(--shiki-light) !important;
+          /* Shiki Dual Theme Logic - Allowing internal syntax colors through */
+          html:not(.dark) .shiki {
             background-color: var(--shiki-light-bg) !important;
           }
 
-          html.dark .shiki,
-          html.dark .shiki span {
-            color: var(--shiki-dark) !important;
+          html.dark .shiki {
             background-color: var(--shiki-dark-bg) !important;
           }
         `}} />
       </div>
 
       {/* Terminal-like Status Bar */}
-      <div className="px-4 py-1.5 bg-sidebar-bg/30 border-t border-sidebar-border flex justify-between items-center text-[10px] text-zinc-500 font-bold tracking-widest opacity-80">
-        <div className="flex gap-4">
-          <span>{code.split('\n').length} LINES</span>
+      <div className="px-5 py-2 bg-sidebar-bg/50 border-t border-sidebar-border flex justify-between items-center text-[9px] text-zinc-500 font-bold tracking-[0.2em] uppercase opacity-60">
+        <div className="flex gap-6">
+          <span className="flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-primary" />
+            {code.split('\n').length} LINES
+          </span>
           <span>{new Blob([code]).size} B</span>
         </div>
-        <div className="flex gap-4 uppercase font-bold text-primary/40 text-[9px] tracking-[0.2em]">
-          <span>UTF-8</span>
-          <span>Spaces: 2</span>
+        <div className="flex gap-4 items-center">
+          <span className="text-primary/50">UTF-8</span>
+          <span className="px-1.5 py-0.5 rounded bg-foreground/5 border border-sidebar-border">LF</span>
         </div>
       </div>
     </div>

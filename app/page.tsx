@@ -58,10 +58,10 @@ export default function Home() {
             </div>
             
             <h1 className="text-5xl md:text-7xl font-bold tracking-tighter mb-8 text-foreground uppercase">
-              The Holy Graill<span className="text-primary opacity-30">_</span>
+              The Holy Grail<span className="text-primary opacity-30">_</span>
             </h1>
             
-            <p className="max-w-2xl text-lg text-zinc-500 leading-relaxed font-mono">
+            <p className="max-w-2xl text-lg text-foreground/60 leading-relaxed font-mono">
               The master knowledge base for software engineering excellence. 
               high-performance architectures, domain expertise, and foundational systems.
             </p>
