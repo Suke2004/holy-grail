@@ -19,8 +19,10 @@ export async function generateSidebar(dir = path.join(process.cwd(), 'content'))
 
   const contentDir = path.join(process.cwd(), 'content');
 
+  const CODE_EXTENSIONS = ['.c', '.h', '.cpp', '.hpp', '.py', '.js', '.ts', '.go', '.rs', '.java', '.lua'];
+
   for (const entry of entries) {
-    if (entry.isDirectory() && entry.name !== 'code' && entry.name !== 'misc') {
+    if (entry.isDirectory()) {
       const children = await generateSidebar(path.join(dir, entry.name));
       if (children.length > 0) {
         items.push({
@@ -28,14 +30,19 @@ export async function generateSidebar(dir = path.join(process.cwd(), 'content'))
           items: children
         });
       }
-    } else if (entry.name.endsWith('.mdx')) {
-      const fullPath = path.join(dir, entry.name);
-      const relative = path.relative(contentDir, fullPath).replace(/\\/g, '/').replace('.mdx', '');
-      
-      items.push({
-        title: formatTitle(entry.name.replace('.mdx', '')),
-        href: `/${relative}`
-      });
+    } else {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (ext === '.mdx' || ext === '.md' || CODE_EXTENSIONS.includes(ext)) {
+        const fullPath = path.join(dir, entry.name);
+        const relative = path.relative(contentDir, fullPath)
+          .replace(/\\/g, '/')
+          .replace(new RegExp(`${ext}$`), '');
+        
+        items.push({
+          title: formatTitle(entry.name.replace(new RegExp(`${ext}$`), '')),
+          href: `/${relative}`
+        });
+      }
     }
   }
   

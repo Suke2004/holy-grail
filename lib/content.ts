@@ -4,26 +4,54 @@ import matter from 'gray-matter';
 
 const CONTENT_DIR = path.join(process.cwd(), 'content');
 
+const CODE_EXTS = ['.c', '.h', '.cpp', '.hpp', '.py', '.js', '.ts', '.go', '.rs', '.java', '.lua', '.txt'];
+
 export async function getAllSlugs() {
   const files = await getFilesRecursive(CONTENT_DIR);
   return files
-    .filter(file => file.endsWith('.mdx'))
+    .filter(file => {
+      const ext = path.extname(file).toLowerCase();
+      return ext === '.mdx' || ext === '.md' || CODE_EXTS.includes(ext);
+    })
     .map(file => {
       const relativePath = path.relative(CONTENT_DIR, file);
-      // Remove .mdx extension and split paths
-      return relativePath.replace(/\.mdx$/, '').split(path.sep);
+      // Remove extension and split paths
+      const ext = path.extname(relativePath);
+      return relativePath.replace(new RegExp(`\\${ext}$`), '').split(path.sep);
     });
 }
 
 export async function getMdxContent(slugPath: string) {
-  const fullPath = path.join(CONTENT_DIR, `${slugPath}.mdx`);
-  try {
-    const fileContents = await fs.readFile(fullPath, 'utf8');
-    const { data, content } = matter(fileContents);
-    return { frontmatter: data, content };
-  } catch (error) {
-    return null;
+  // Try .mdx then .md then code extensions
+  const extensions = ['.mdx', '.md', ...CODE_EXTS];
+  
+  for (const ext of extensions) {
+    const fullPath = path.join(CONTENT_DIR, `${slugPath}${ext}`);
+    try {
+      const fileContents = await fs.readFile(fullPath, 'utf8');
+      
+      // If it's a code file, wrap it in a code block
+      if (CODE_EXTS.includes(ext)) {
+        const lang = ext.substring(1);
+        return { 
+          frontmatter: { 
+            title: path.basename(slugPath).replace(/-/g, ' '),
+            difficulty: "Source File",
+            tags: ["Raw Code", lang],
+            isRawCode: true,
+            extension: ext
+          }, 
+          content: `\`\`\`${lang}\n${fileContents}\n\`\`\`` 
+        };
+      }
+      
+      const { data, content } = matter(fileContents);
+      return { frontmatter: data, content };
+    } catch (error) {
+      continue;
+    }
   }
+  return null;
 }
 
 // Utility to walk directories

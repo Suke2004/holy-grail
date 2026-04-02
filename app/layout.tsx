@@ -1,16 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Space_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Layout/Sidebar";
 import { generateSidebar } from "@/lib/sidebar";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceMono = Space_Mono({
+  weight: ['400', '700'],
+  variable: "--font-space-mono",
   subsets: ["latin"],
 });
 
@@ -29,9 +25,9 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      className={`${spaceMono.variable} h-full antialiased dark`}
     >
-      <body className="h-full flex bg-[#09090b] text-zinc-100 selection:bg-blue-500/30">
+      <body className="h-full flex bg-[#09090b] text-zinc-100 selection:bg-blue-500/30 font-mono">
         <Sidebar items={sidebarItems} />
         <main className="flex-1 h-full overflow-y-auto bg-[#09090b] shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.5)]">
           {children}
